@@ -18,19 +18,72 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CommandOptions {
-    Play { index: Option<usize> },
+    /// Play media at the specified index in the playlist
+    Play {
+        /// The index of the media to play
+        index: Option<usize>
+    },
+
+    /// Pause the currently playing media
     Pause,
+
+    /// Stop the playback and quit MPV
     Stop,
+
+    /// Skip to the next item in the playlist
     Next,
+
+    /// Skip to the previous item in the playlist
     Prev,
-    Seek { seconds: i32 },
-    Move { index1: usize, index2: usize },
-    Remove { index: Option<usize> },
+
+    /// Seek to a specific position in the currently playing media
+    Seek {
+        /// The number of seconds to seek to
+        seconds: i32
+    },
+
+    /// Move an item in the playlist from one index to another
+    Move {
+        /// The index of the item to move
+        index1: usize,
+        /// The index to move the item to
+        index2: usize
+    },
+
+    /// Remove an item from the playlist
+    ///
+    /// If invoked while playlist has no entries, or if the only entry
+    /// is the active video, then this will exit MPV.
+    Remove {
+        /// The index of the item to remove (optional)
+        index: Option<usize>
+    },
+
+    /// Clear the entire playlist
     Clear,
+
+    /// List all the items in the playlist
     List,
-    Add { filenames: Vec<String> },
-    Replace { filenames: Vec<String> },
-    Prop { properties: Vec<String> },
+
+    /// Add files to the playlist
+    ///
+    /// Needs at least one file to be passed.
+    Add {
+        /// The filenames of the files to add
+        filenames: Vec<String>
+    },
+
+    /// Replace the current playlist with new files
+    Replace {
+        /// The filenames of the files to replace the playlist with
+        filenames: Vec<String>
+    },
+
+    /// Fetch properties of the current playback or playlist
+    Prop {
+        /// The properties to fetch
+        properties: Vec<String>
+    },
 }
 
 const SOCKET_PATH: &str = "/tmp/mpvsocket";

@@ -237,7 +237,7 @@ async fn main() -> io::Result<()> {
             info!("Fetching properties: {:?}", properties);
             for property in properties {
                 if let Some(data) = send_ipc_command("get_property", &[json!(property)]).await? {
-                    println!("{}: {}", property, data);
+                    println!("{property}: {data}");
                 }
             }
         }

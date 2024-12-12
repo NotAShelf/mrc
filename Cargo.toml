@@ -1,0 +1,11 @@
+[package]
+name = "mrc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = {version = "4.5.23", features = ["derive"]}
+clap_derive = "4.5.18"
+ipc-channel = "0.19.0"
+serde_json = "1.0.133"
+tokio = { version = "1.42.0", features = ["full"] }

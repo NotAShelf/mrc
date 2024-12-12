@@ -21,7 +21,7 @@ enum CommandOptions {
     /// Play media at the specified index in the playlist
     Play {
         /// The index of the media to play
-        index: Option<usize>
+        index: Option<usize>,
     },
 
     /// Pause the currently playing media
@@ -39,7 +39,7 @@ enum CommandOptions {
     /// Seek to a specific position in the currently playing media
     Seek {
         /// The number of seconds to seek to
-        seconds: i32
+        seconds: i32,
     },
 
     /// Move an item in the playlist from one index to another
@@ -47,7 +47,7 @@ enum CommandOptions {
         /// The index of the item to move
         index1: usize,
         /// The index to move the item to
-        index2: usize
+        index2: usize,
     },
 
     /// Remove an item from the playlist
@@ -56,7 +56,7 @@ enum CommandOptions {
     /// is the active video, then this will exit MPV.
     Remove {
         /// The index of the item to remove (optional)
-        index: Option<usize>
+        index: Option<usize>,
     },
 
     /// Clear the entire playlist
@@ -70,19 +70,19 @@ enum CommandOptions {
     /// Needs at least one file to be passed.
     Add {
         /// The filenames of the files to add
-        filenames: Vec<String>
+        filenames: Vec<String>,
     },
 
     /// Replace the current playlist with new files
     Replace {
         /// The filenames of the files to replace the playlist with
-        filenames: Vec<String>
+        filenames: Vec<String>,
     },
 
     /// Fetch properties of the current playback or playlist
     Prop {
         /// The properties to fetch
-        properties: Vec<String>
+        properties: Vec<String>,
     },
 }
 
@@ -95,18 +95,14 @@ async fn send_ipc_command(
         "Sending IPC command: {} with arguments: {:?}",
         command, args
     );
-
     match UnixStream::connect(SOCKET_PATH).await {
         Ok(mut socket) => {
             debug!("Connected to MPV socket successfully");
-
             let mut command_array = vec![json!(command)];
             command_array.extend_from_slice(args);
             let message = json!({ "command": command_array });
-
             let message_str = format!("{}\n", serde_json::to_string(&message)?);
             debug!("Serialized message to send with newline: {}", message_str);
-
             socket.write_all(message_str.as_bytes()).await?;
             socket.flush().await?;
             debug!("Message sent and flushed");
@@ -136,10 +132,20 @@ async fn send_ipc_command(
     }
 }
 
+async fn ipc_command(command: &str, args: &[serde_json::Value]) -> io::Result<()> {
+    if (send_ipc_command(command, args).await?).is_some() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to execute command",
+        ))
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     tracing_subscriber::fmt::init();
-
     let cli = Cli::parse();
 
     if !PathBuf::from(SOCKET_PATH).exists() {
@@ -152,55 +158,55 @@ async fn main() -> io::Result<()> {
         CommandOptions::Play { index } => {
             if let Some(idx) = index {
                 info!("Playing media at index: {}", idx);
-                send_ipc_command("set_property", &[json!("playlist-pos"), json!(idx)]).await?;
+                ipc_command("set_property", &[json!("playlist-pos"), json!(idx)]).await?;
             }
             info!("Unpausing playback");
-            send_ipc_command("set_property", &[json!("pause"), json!(false)]).await?;
+            ipc_command("set_property", &[json!("pause"), json!(false)]).await?;
         }
 
         CommandOptions::Pause => {
             info!("Pausing playback");
-            send_ipc_command("set_property", &[json!("pause"), json!(true)]).await?;
+            ipc_command("set_property", &[json!("pause"), json!(true)]).await?;
         }
 
         CommandOptions::Stop => {
             info!("Stopping playback and quitting MPV");
-            send_ipc_command("quit", &[]).await?;
+            ipc_command("quit", &[]).await?;
         }
 
         CommandOptions::Next => {
             info!("Skipping to next item in the playlist");
-            send_ipc_command("playlist-next", &[]).await?;
+            ipc_command("playlist-next", &[]).await?;
         }
 
         CommandOptions::Prev => {
             info!("Skipping to previous item in the playlist");
-            send_ipc_command("playlist-prev", &[]).await?;
+            ipc_command("playlist-prev", &[]).await?;
         }
 
         CommandOptions::Seek { seconds } => {
             info!("Seeking to {} seconds", seconds);
-            send_ipc_command("seek", &[json!(seconds)]).await?;
+            ipc_command("seek", &[json!(seconds)]).await?;
         }
 
         CommandOptions::Move { index1, index2 } => {
             info!("Moving item from index {} to {}", index1, index2);
-            send_ipc_command("playlist-move", &[json!(index1), json!(index2)]).await?;
+            ipc_command("playlist-move", &[json!(index1), json!(index2)]).await?;
         }
 
         CommandOptions::Remove { index } => {
             if let Some(idx) = index {
                 info!("Removing item at index {}", idx);
-                send_ipc_command("playlist-remove", &[json!(idx)]).await?;
+                ipc_command("playlist-remove", &[json!(idx)]).await?;
             } else {
                 info!("Removing current item from playlist");
-                send_ipc_command("playlist-remove", &[json!("current")]).await?;
+                ipc_command("playlist-remove", &[json!("current")]).await?;
             }
         }
 
         CommandOptions::Clear => {
             info!("Clearing the playlist");
-            send_ipc_command("playlist-clear", &[]).await?;
+            ipc_command("playlist-clear", &[]).await?;
         }
 
         CommandOptions::List => {
@@ -219,16 +225,16 @@ async fn main() -> io::Result<()> {
 
             info!("Adding {} files to the playlist", filenames.len());
             for filename in filenames {
-                send_ipc_command("loadfile", &[json!(filename), json!("append-play")]).await?;
+                ipc_command("loadfile", &[json!(filename), json!("append-play")]).await?;
             }
         }
 
         CommandOptions::Replace { filenames } => {
             info!("Replacing current playlist with {} files", filenames.len());
             if let Some(first_file) = filenames.first() {
-                send_ipc_command("loadfile", &[json!(first_file), json!("replace")]).await?;
+                ipc_command("loadfile", &[json!(first_file), json!("replace")]).await?;
                 for filename in &filenames[1..] {
-                    send_ipc_command("loadfile", &[json!(filename), json!("append-play")]).await?;
+                    ipc_command("loadfile", &[json!(filename), json!("append-play")]).await?;
                 }
             }
         }

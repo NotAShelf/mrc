@@ -9,3 +9,5 @@ clap_derive = "4.5.18"
 ipc-channel = "0.19.0"
 serde_json = "1.0.133"
 tokio = { version = "1.42.0", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"

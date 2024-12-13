@@ -1,13 +1,15 @@
 use clap::{Parser, Subcommand};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::io::{self};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
 
-// TODO: SOCKET_PATH should be an argument to send_ipc_command
-// and in the CLI, it should be expected as a command line argument
-// or/and environment variable.
-use mrc::{SOCKET_PATH, send_ipc_command};
+use mrc::set_property;
+use mrc::SOCKET_PATH;
+use mrc::{
+    get_property, loadfile, playlist_clear, playlist_move, playlist_next, playlist_prev,
+    playlist_remove, quit, seek,
+};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -89,10 +91,6 @@ enum CommandOptions {
     },
 }
 
-pub async fn execute_command(command: &str, args: &[Value]) -> io::Result<Option<Value>> {
-    send_ipc_command(command, args).await
-}
-
 #[tokio::main]
 async fn main() -> io::Result<()> {
     tracing_subscriber::fmt::init();
@@ -108,60 +106,61 @@ async fn main() -> io::Result<()> {
         CommandOptions::Play { index } => {
             if let Some(idx) = index {
                 info!("Playing media at index: {}", idx);
-                execute_command("set_property", &[json!("playlist-pos"), json!(idx)]).await?;
+                set_property("playlist-pos", &json!(idx), None).await?;
             }
+
             info!("Unpausing playback");
-            execute_command("set_property", &[json!("pause"), json!(false)]).await?;
+            set_property("pause", &json!(false), None).await?;
         }
 
         CommandOptions::Pause => {
             info!("Pausing playback");
-            execute_command("set_property", &[json!("pause"), json!(true)]).await?;
+            set_property("pause", &json!(true), None).await?;
         }
 
         CommandOptions::Stop => {
             info!("Stopping playback and quitting MPV");
-            execute_command("quit", &[]).await?;
+            quit(None).await?;
         }
 
         CommandOptions::Next => {
             info!("Skipping to next item in the playlist");
-            execute_command("playlist-next", &[]).await?;
+            playlist_next(None).await?;
         }
 
         CommandOptions::Prev => {
             info!("Skipping to previous item in the playlist");
-            execute_command("playlist-prev", &[]).await?;
+            playlist_prev(None).await?;
         }
 
         CommandOptions::Seek { seconds } => {
             info!("Seeking to {} seconds", seconds);
-            execute_command("seek", &[json!(seconds)]).await?;
+            seek(seconds.into(), None).await?;
         }
 
         CommandOptions::Move { index1, index2 } => {
             info!("Moving item from index {} to {}", index1, index2);
-            execute_command("playlist-move", &[json!(index1), json!(index2)]).await?;
+            playlist_move(index1, index2, None).await?;
         }
 
         CommandOptions::Remove { index } => {
             if let Some(idx) = index {
                 info!("Removing item at index {}", idx);
-                execute_command("playlist-remove", &[json!(idx)]).await?;
+                playlist_remove(Some(idx), None).await?;
             } else {
                 info!("Removing current item from playlist");
-                execute_command("playlist-remove", &[json!("current")]).await?;
+                playlist_remove(None, None).await?;
             }
         }
 
         CommandOptions::Clear => {
             info!("Clearing the playlist");
-            execute_command("playlist-clear", &[]).await?;
+            playlist_clear(None).await?;
         }
 
         CommandOptions::List => {
             info!("Listing playlist items");
-            if let Some(data) = send_ipc_command("get_property", &[json!("playlist")]).await? {
+            if let Some(data) = get_property("playlist", None).await? {
                 println!("{}", serde_json::to_string_pretty(&data)?);
             }
         }
@@ -174,16 +173,16 @@ async fn main() -> io::Result<()> {
             }
             info!("Adding {} files to the playlist", filenames.len());
             for filename in filenames {
-                execute_command("loadfile", &[json!(filename), json!("append-play")]).await?;
+                loadfile(&filename, true, None).await?;
             }
         }
 
         CommandOptions::Replace { filenames } => {
             info!("Replacing current playlist with {} files", filenames.len());
             if let Some(first_file) = filenames.first() {
-                execute_command("loadfile", &[json!(first_file), json!("replace")]).await?;
+                loadfile(first_file, false, None).await?;
                 for filename in &filenames[1..] {
-                    execute_command("loadfile", &[json!(filename), json!("append-play")]).await?;
+                    loadfile(filename, true, None).await?;
                 }
             }
         }
@@ -191,7 +190,7 @@ async fn main() -> io::Result<()> {
         CommandOptions::Prop { properties } => {
             info!("Fetching properties: {:?}", properties);
             for property in properties {
-                if let Some(data) = send_ipc_command("get_property", &[json!(property)]).await? {
+                if let Some(data) = get_property(&property, None).await? {
                     println!("{property}: {data}");
                 }
             }

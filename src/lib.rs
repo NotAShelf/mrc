@@ -114,6 +114,9 @@ pub async fn send_ipc_command(
 ///
 /// This enum provides variants for frequently used MPV commands, which can be converted to their
 /// string equivalents using the `as_str` method.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 #[derive(Debug)]
 pub enum MpvCommand {
     /// Sets a property to a specified value in MPV.
@@ -168,6 +171,9 @@ impl MpvCommand {
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn set_property(
     property: &str,
     value: &Value,
@@ -188,6 +194,9 @@ pub async fn set_property(
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn playlist_next(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistNext.as_str(), &[], socket_path).await
 }
@@ -199,6 +208,9 @@ pub async fn playlist_next(socket_path: Option<&str>) -> io::Result<Option<Value
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn playlist_prev(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistPrev.as_str(), &[], socket_path).await
 }
@@ -211,6 +223,9 @@ pub async fn playlist_prev(socket_path: Option<&str>) -> io::Result<Option<Value
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn seek(seconds: f64, socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::Seek.as_str(), &[json!(seconds)], socket_path).await
 }
@@ -222,6 +237,9 @@ pub async fn seek(seconds: f64, socket_path: Option<&str>) -> io::Result<Option<
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn quit(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::Quit.as_str(), &[], socket_path).await
 }
@@ -235,6 +253,9 @@ pub async fn quit(socket_path: Option<&str>) -> io::Result<Option<Value>> {
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn playlist_move(
     from_index: usize,
     to_index: usize,
@@ -256,6 +277,9 @@ pub async fn playlist_move(
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn playlist_remove(
     index: Option<usize>,
     socket_path: Option<&str>,
@@ -274,6 +298,9 @@ pub async fn playlist_remove(
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn playlist_clear(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistClear.as_str(), &[], socket_path).await
 }
@@ -286,6 +313,9 @@ pub async fn playlist_clear(socket_path: Option<&str>) -> io::Result<Option<Valu
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn get_property(property: &str, socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(
         MpvCommand::GetProperty.as_str(),
@@ -304,6 +334,9 @@ pub async fn get_property(property: &str, socket_path: Option<&str>) -> io::Resu
 ///
 /// # Returns
 /// A `Result` containing the response data.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or the command execution encounters issues.
 pub async fn loadfile(
     filename: &str,
     append: bool,

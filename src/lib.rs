@@ -1,3 +1,45 @@
+//! MRC
+//! A library for interacting with the MPV media player using its JSON IPC (Inter-Process Communication) protocol.
+//!
+//! This crate provides a set of utilities to communicate with MPV's IPC socket, enabling you to send commands
+//! and retrieve responses in a structured format.
+//!
+//! ## Features
+//!
+//! - Send commands to MPV's IPC socket
+//! - Retrieve responses in JSON format
+//! - Supports common MPV commands like `set_property`, `seek`, and `playlist-next`
+//! - Flexible socket path configuration
+//!
+//! ## Example Usage
+//! ```rust
+//! use serde_json::json;
+//! use tokio;
+//! use mrc::{send_ipc_command, playlist_next, set_property};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let result = playlist_next(None).await;
+//!     match result {
+//!         Ok(response) => println!("Playlist moved to next: {:?}", response),
+//!         Err(err) => eprintln!("Error: {:?}", err),
+//!     }
+//!
+//!     let property_result = set_property("volume", &json!(50), None).await;
+//!     match property_result {
+//!         Ok(response) => println!("Volume set: {:?}", response),
+//!         Err(err) => eprintln!("Error: {:?}", err),
+//!     }
+//! }
+//! ```
+//!
+//! ## Constants
+//!
+//! ### `SOCKET_PATH`
+//! Default path for the MPV IPC socket: `/tmp/mpvsocket`
+//!
+//! ## Functions
+
 use serde_json::{json, Value};
 use std::io::{self};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -8,7 +50,16 @@ pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
 
 /// Sends a generic IPC command to the specified socket and returns the parsed response data.
 ///
-/// If a socket path is not provided, it will fall back to the example path of `/tmp/mpvsocket`
+/// # Arguments
+/// - `command`: The name of the command to send to MPV.
+/// - `args`: A slice of `Value` arguments to include in the command.
+/// - `socket_path`: An optional custom path to the MPV IPC socket. If `None`, the default path is used.
+///
+/// # Returns
+/// A `Result` containing an `Option<Value>` with the parsed response data if successful.
+///
+/// # Errors
+/// Returns an error if the connection to the socket fails or if the response cannot be parsed.
 pub async fn send_ipc_command(
     command: &str,
     args: &[Value],
@@ -59,22 +110,64 @@ pub async fn send_ipc_command(
     }
 }
 
-// Common MPV commands
+/// Represents common MPV commands.
+///
+/// This enum provides variants for frequently used MPV commands, which can be converted to their
+/// string equivalents using the `as_str` method.
 #[derive(Debug)]
 pub enum MpvCommand {
+    /// Sets a property to a specified value in MPV.
     SetProperty,
+    /// Moves to the next item in the playlist.
     PlaylistNext,
+    /// Moves to the previous item in the playlist.
     PlaylistPrev,
+    /// Seeks to a specific time in the current media.
     Seek,
+    /// Quits the MPV application.
     Quit,
+    /// Moves an item in the playlist from one index to another.
     PlaylistMove,
+    /// Removes an item from the playlist.
     PlaylistRemove,
+    /// Clears all items from the playlist.
     PlaylistClear,
+    /// Retrieves the value of a property in MPV.
     GetProperty,
+    /// Loads a file into MPV.
     LoadFile,
 }
 
-// Send any generic command to the MPV IPC socket.
+impl MpvCommand {
+    /// Converts MPV commands to their string equivalents.
+    ///
+    /// # Returns
+    /// A string slice representing the command.
+    pub fn as_str(&self) -> &str {
+        match self {
+            MpvCommand::SetProperty => "set_property",
+            MpvCommand::PlaylistNext => "playlist-next",
+            MpvCommand::PlaylistPrev => "playlist-prev",
+            MpvCommand::Seek => "seek",
+            MpvCommand::Quit => "quit",
+            MpvCommand::PlaylistMove => "playlist-move",
+            MpvCommand::PlaylistRemove => "playlist-remove",
+            MpvCommand::PlaylistClear => "playlist-clear",
+            MpvCommand::GetProperty => "get_property",
+            MpvCommand::LoadFile => "loadfile",
+        }
+    }
+}
+
+/// Sends the `set_property` command to MPV to change a property value.
+///
+/// # Arguments
+/// - `property`: The name of the property to set.
+/// - `value`: The new value to assign to the property.
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn set_property(
     property: &str,
     value: &Value,
@@ -88,22 +181,60 @@ pub async fn set_property(
     .await
 }
 
+/// Sends the `playlist-next` command to move to the next playlist item.
+///
+/// # Arguments
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn playlist_next(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistNext.as_str(), &[], socket_path).await
 }
 
+/// Sends the `playlist-prev` command to move to the previous playlist item.
+///
+/// # Arguments
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn playlist_prev(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistPrev.as_str(), &[], socket_path).await
 }
 
+/// Sends the `seek` command to seek the media playback by a given number of seconds.
+///
+/// # Arguments
+/// - `seconds`: The number of seconds to seek.
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn seek(seconds: f64, socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::Seek.as_str(), &[json!(seconds)], socket_path).await
 }
 
+/// Sends the `quit` command to terminate MPV.
+///
+/// # Arguments
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn quit(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::Quit.as_str(), &[], socket_path).await
 }
 
+/// Sends the `playlist-move` command to move a playlist item from one index to another.
+///
+/// # Arguments
+/// - `from_index`: The index of the item to move.
+/// - `to_index`: The index to move the item to.
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn playlist_move(
     from_index: usize,
     to_index: usize,
@@ -117,6 +248,14 @@ pub async fn playlist_move(
     .await
 }
 
+/// Sends the `playlist-remove` command to remove an item from the playlist.
+///
+/// # Arguments
+/// - `index`: The index of the item to remove, or `None` to remove the current item.
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn playlist_remove(
     index: Option<usize>,
     socket_path: Option<&str>,
@@ -128,10 +267,25 @@ pub async fn playlist_remove(
     send_ipc_command(MpvCommand::PlaylistRemove.as_str(), &args, socket_path).await
 }
 
+/// Sends the `playlist-clear` command to clear the playlist.
+///
+/// # Arguments
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn playlist_clear(socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistClear.as_str(), &[], socket_path).await
 }
 
+/// Sends the `get_property` command to retrieve a property value from MPV.
+///
+/// # Arguments
+/// - `property`: The name of the property to retrieve.
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn get_property(property: &str, socket_path: Option<&str>) -> io::Result<Option<Value>> {
     send_ipc_command(
         MpvCommand::GetProperty.as_str(),
@@ -141,6 +295,15 @@ pub async fn get_property(property: &str, socket_path: Option<&str>) -> io::Resu
     .await
 }
 
+/// Sends the `loadfile` command to load a file into MPV.
+///
+/// # Arguments
+/// - `filename`: The name of the file to load.
+/// - `append`: Whether to append the file to the playlist (`true`) or replace the current file (`false`).
+/// - `socket_path`: An optional custom socket path.
+///
+/// # Returns
+/// A `Result` containing the response data.
 pub async fn loadfile(
     filename: &str,
     append: bool,
@@ -157,22 +320,4 @@ pub async fn loadfile(
         socket_path,
     )
     .await
-}
-
-impl MpvCommand {
-    // Convert commands to their string equivalents
-    pub fn as_str(&self) -> &str {
-        match self {
-            MpvCommand::SetProperty => "set_property",
-            MpvCommand::PlaylistNext => "playlist-next",
-            MpvCommand::PlaylistPrev => "playlist-prev",
-            MpvCommand::Seek => "seek",
-            MpvCommand::Quit => "quit",
-            MpvCommand::PlaylistMove => "playlist-move",
-            MpvCommand::PlaylistRemove => "playlist-remove",
-            MpvCommand::PlaylistClear => "playlist-clear",
-            MpvCommand::GetProperty => "get_property",
-            MpvCommand::LoadFile => "loadfile",
-        }
-    }
 }

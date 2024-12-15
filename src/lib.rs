@@ -143,18 +143,18 @@ impl MpvCommand {
     ///
     /// # Returns
     /// A string slice representing the command.
-    pub fn as_str(&self) -> &str {
+    #[must_use] pub const fn as_str(&self) -> &str {
         match self {
-            MpvCommand::SetProperty => "set_property",
-            MpvCommand::PlaylistNext => "playlist-next",
-            MpvCommand::PlaylistPrev => "playlist-prev",
-            MpvCommand::Seek => "seek",
-            MpvCommand::Quit => "quit",
-            MpvCommand::PlaylistMove => "playlist-move",
-            MpvCommand::PlaylistRemove => "playlist-remove",
-            MpvCommand::PlaylistClear => "playlist-clear",
-            MpvCommand::GetProperty => "get_property",
-            MpvCommand::LoadFile => "loadfile",
+            Self::SetProperty => "set_property",
+            Self::PlaylistNext => "playlist-next",
+            Self::PlaylistPrev => "playlist-prev",
+            Self::Seek => "seek",
+            Self::Quit => "quit",
+            Self::PlaylistMove => "playlist-move",
+            Self::PlaylistRemove => "playlist-remove",
+            Self::PlaylistClear => "playlist-clear",
+            Self::GetProperty => "get_property",
+            Self::LoadFile => "loadfile",
         }
     }
 }

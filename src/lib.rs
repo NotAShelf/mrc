@@ -146,7 +146,8 @@ impl MpvCommand {
     ///
     /// # Returns
     /// A string slice representing the command.
-    #[must_use] pub const fn as_str(&self) -> &str {
+    #[must_use]
+    pub const fn as_str(&self) -> &str {
         match self {
             Self::SetProperty => "set_property",
             Self::PlaylistNext => "playlist-next",

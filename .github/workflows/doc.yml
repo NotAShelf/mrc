@@ -1,0 +1,48 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: read
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  rustdoc:
+    name: Build Rust API docs
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Check docs with no default features
+        run: cargo doc
+
+      - name: Clean docs
+        run: cargo clean
+
+      - name: Build Documentation
+        run: cargo doc --workspace
+
+      - name: Deploy Docs
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc
+          publish_branch: gh-pages

@@ -216,7 +216,6 @@ async fn main() -> io::Result<()> {
                     break;
                 }
 
-
                 // I don't like this either, but it looks cleaner than a multi-line
                 // print macro just cramped in here.
                 let commands = vec![

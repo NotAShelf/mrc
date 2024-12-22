@@ -5,11 +5,9 @@ use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_native_tls::TlsAcceptor;
-use tracing::{info, debug, error};
+use tracing::{debug, error, info};
 
-use mrc::{set_property, get_property, playlist_clear, playlist_next, playlist_prev, quit, seek};
-
-const AUTH_TOKEN: &str = "your_secure_token";
+use mrc::{get_property, playlist_clear, playlist_next, playlist_prev, quit, seek, set_property};
 
 async fn handle_connection(
     stream: tokio::net::TcpStream,
@@ -24,13 +22,28 @@ async fn handle_connection(
     debug!("Received request:\n{}", request);
 
     let headers = request.split("\r\n").collect::<Vec<&str>>();
-    let token_line = headers.iter().find(|&&line| line.starts_with("Authorization:"));
+    let token_line = headers
+        .iter()
+        .find(|&&line| line.starts_with("Authorization:"));
     let token = match token_line {
         Some(line) => line.split(" ").nth(1).unwrap_or_default(),
         None => "",
     };
 
-    if token != AUTH_TOKEN {
+    let auth_token = match env::var("AUTH_TOKEN") {
+        Ok(token) => token,
+        Err(_) => {
+            error!("Authentication token is not set. Connection cannot be accepted.");
+            stream.write_all(b"Authentication token not set\n").await?;
+
+            // You know what? I do not care to panic when the token is missing.
+            // Sure, start the server and hell even accept the connection. Auth
+            // will be refused if token is incorrect, so we can just continue here.
+            return Ok(());
+        }
+    };
+
+    if token != auth_token {
         stream.write_all(b"Authentication failed\n").await?;
         return Ok(());
     }

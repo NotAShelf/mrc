@@ -2,6 +2,7 @@
 name = "mrc"
 version = "0.1.0"
 edition = "2021"
+default-run = "cli"
 
 [[bin]]
 name = "cli" # CLI implementation for terminal usage

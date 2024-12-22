@@ -1,1 +1,7 @@
 /target
+
+# Sensitive
+certificate.pem
+private_key.pem
+identity.pfx
+

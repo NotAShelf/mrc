@@ -3,11 +3,22 @@ name = "mrc"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "cli" # CLI implementation for terminal usage
+path = "src/cli.rs"
+
+[[bin]]
+name = "server" # remote usage
+path = "src/server.rs"
+
 [dependencies]
 clap = {version = "4.5.23", features = ["derive"]}
 clap_derive = "4.5.18"
 ipc-channel = "0.19.0"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.133"
 tokio = { version = "1.42.0", features = ["full"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"

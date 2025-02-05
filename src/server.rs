@@ -1,6 +1,8 @@
 use std::env;
+use std::io::Read;
 use std::sync::Arc;
 
+use clap::Parser;
 use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -8,6 +10,18 @@ use tokio_native_tls::TlsAcceptor;
 use tracing::{debug, error, info};
 
 use mrc::{get_property, playlist_clear, playlist_next, playlist_prev, quit, seek, set_property};
+
+#[derive(Parser)]
+#[command(author, version, about)]
+struct Config {
+    /// The IP address and port to bind the server to
+    #[arg(short, long, default_value = "127.0.0.1:8080")]
+    bind: String,
+
+    /// Path to MPV IPC socket
+    #[arg(short, long, default_value = "/tmp/mpvsocket")]
+    socket: String,
+}
 
 async fn handle_connection(
     stream: tokio::net::TcpStream,
@@ -36,9 +50,10 @@ async fn handle_connection(
             error!("Authentication token is not set. Connection cannot be accepted.");
             stream.write_all(b"Authentication token not set\n").await?;
 
-            // You know what? I do not care to panic when the token is missing.
-            // Sure, start the server and hell even accept the connection. Auth
-            // will be refused if token is incorrect, so we can just continue here.
+            // You know what? I do not care to panic when the authentication token is
+            // missing in the environment. Start the goddamned server and hell, even
+            // accept incoming connections. Authenticated requests will be refused
+            // when the token is incorrect or not set, so we can simply continue here.
             return Ok(());
         }
     };
@@ -146,66 +161,38 @@ async fn process_command(command: &str) -> Result<String, String> {
 }
 
 fn create_tls_acceptor() -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
-    // FIXME: This is ugly, needs to be cleaned up.
-    let pfx_path = match env::var("TLS_PFX_PATH") {
-        Ok(path) => path,
-        Err(_) => {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Environment variable TLS_PFX_PATH is missing. Please provide the path to the TLS certificate file.",
-            )));
-        }
-    };
+    let pfx_path = env::var("TLS_PFX_PATH")
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "TLS_PFX_PATH not set"))?;
+    let password = env::var("TLS_PASSWORD")
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "TLS_PASSWORD not set"))?;
 
-    let password = match env::var("TLS_PASSWORD") {
-        Ok(password) => password,
-        Err(_) => {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Environment variable TLS_PASSWORD is missing. Please provide the password for the TLS certificate.",
-            )));
-        }
-    };
-
-    // Try to read the PFX file and handle possible errors
-    let mut file = match std::fs::File::open(&pfx_path) {
-        Ok(f) => f,
-        Err(e) => return Err(Box::new(e)),
-    };
-
+    let mut file = std::fs::File::open(&pfx_path)?;
     let mut identity = vec![];
-    if let Err(e) = std::io::Read::read_to_end(&mut file, &mut identity) {
-        return Err(Box::new(e));
-    }
+    file.read_to_end(&mut identity)?;
 
-    // Try to create Identity from PFX data
-    let identity = match Identity::from_pkcs12(&identity, &password) {
-        Ok(id) => id,
-        Err(e) => return Err(Box::new(e)),
-    };
-
-    // Try to create TlsAcceptor from Identity
-    let native_acceptor = match NativeTlsAcceptor::new(identity) {
-        Ok(na) => na,
-        Err(e) => return Err(Box::new(e)),
-    };
-
+    let identity = Identity::from_pkcs12(&identity, &password)?;
+    let native_acceptor = NativeTlsAcceptor::new(identity)?;
     Ok(TlsAcceptor::from(native_acceptor))
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
+    let config = Config::parse();
+
+    if !std::path::Path::new(&config.socket).exists() {
+        error!(
+            "Error: MPV socket not found at '{}'. Is MPV running?",
+            config.socket
+        );
+    }
 
     info!("Server is starting...");
     match create_tls_acceptor() {
         Ok(acceptor) => {
             let acceptor = Arc::new(acceptor);
-
-            // TODO: This needs to be accepted by Clap, and as arguments to the program
-            // But we can, for now, define those as consts that clap falls back to.
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
-            info!("Server is listening on 127.0.0.1:8080...");
+            let listener = tokio::net::TcpListener::bind(&config.bind).await?;
+            info!("Server is listening on {}", config.bind);
 
             loop {
                 let (stream, _) = listener.accept().await?;

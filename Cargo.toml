@@ -3,6 +3,7 @@ name = "mrc"
 version = "0.1.0"
 edition = "2021"
 default-run = "cli"
+authors = ["NotAShelf <raf@notashelf.dev>"]
 
 # CLI implementation for terminal usage
 [[bin]]

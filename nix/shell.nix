@@ -19,8 +19,10 @@ mkShell {
     gcc
     clippy
     rustfmt
+    rustc
+
+    # For TLS and friends
     openssl
     pkg-config
-    rustc
   ];
 }

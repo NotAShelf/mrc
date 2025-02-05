@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ErrorKind"],"mod":["ipc","platform","router"],"type":["Error"]};

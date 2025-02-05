@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["ROUTER","RouterProxy"],"type":["RouterHandler","TypedRouterHandler"]};

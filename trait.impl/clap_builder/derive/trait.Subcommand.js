@@ -1,9 +1,0 @@
-(function() {
-    var implementors = Object.fromEntries([["clap",[]],["clap_builder",[]],["cli",[["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Subcommand.html\" title=\"trait clap_builder::derive::Subcommand\">Subcommand</a> for <a class=\"enum\" href=\"cli/enum.CommandOptions.html\" title=\"enum cli::CommandOptions\">CommandOptions</a>"]]]]);
-    if (window.register_implementors) {
-        window.register_implementors(implementors);
-    } else {
-        window.pending_implementors = implementors;
-    }
-})()
-//{"start":57,"fragment_lengths":[11,20,267]}

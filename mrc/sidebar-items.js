@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SOCKET_PATH"],"enum":["MpvCommand"],"fn":["get_property","loadfile","playlist_clear","playlist_move","playlist_next","playlist_prev","playlist_remove","quit","seek","send_ipc_command","set_property"]};

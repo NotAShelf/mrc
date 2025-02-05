@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IpcError","IpcSelectionResult","TryRecvError"],"fn":["bytes_channel","channel"],"struct":["IpcBytesReceiver","IpcBytesSender","IpcMessage","IpcOneShotServer","IpcReceiver","IpcReceiverSet","IpcSender","IpcSharedMemory","OpaqueIpcReceiver","OpaqueIpcSender"]};

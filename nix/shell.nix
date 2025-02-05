@@ -16,7 +16,6 @@ mkShell {
     rustfmt
     clippy
     cargo
-    cargo
     gcc
     clippy
     rustfmt

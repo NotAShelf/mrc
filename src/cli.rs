@@ -3,11 +3,10 @@ use mrc::set_property;
 use mrc::SOCKET_PATH;
 use mrc::{
     get_property, loadfile, playlist_clear, playlist_move, playlist_next, playlist_prev,
-    playlist_remove, quit, seek,
+    playlist_remove, quit, seek, MrcError, Result,
 };
 use serde_json::json;
-use std::io::{self, Write};
-use std::path::PathBuf;
+use std::{io::{self, Write}, path::PathBuf};
 use tracing::{debug, error, info};
 
 #[derive(Parser)]
@@ -95,14 +94,17 @@ enum CommandOptions {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
     if !PathBuf::from(SOCKET_PATH).exists() {
         debug!(SOCKET_PATH);
         error!("Error: MPV socket not found. Is MPV running?");
-        return Ok(());
+        return Err(MrcError::ConnectionError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "MPV socket not found",
+        )));
     }
 
     match cli.command {
@@ -163,7 +165,9 @@ async fn main() -> io::Result<()> {
         CommandOptions::List => {
             info!("Listing playlist items");
             if let Some(data) = get_property("playlist", None).await? {
-                println!("{}", serde_json::to_string_pretty(&data)?);
+                let pretty_json = serde_json::to_string_pretty(&data)
+                    .map_err(MrcError::ParseError)?;
+                println!("{}", pretty_json);
             }
         }
 
@@ -171,7 +175,7 @@ async fn main() -> io::Result<()> {
             if filenames.is_empty() {
                 let e = "No files provided to add to the playlist";
                 error!("{}", e);
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
+                return Err(MrcError::InvalidInput(e.to_string()));
             }
 
             info!("Adding {} files to the playlist", filenames.len());
@@ -206,9 +210,9 @@ async fn main() -> io::Result<()> {
 
             loop {
                 print!("mpv> ");
-                stdout.flush()?;
+                stdout.flush().map_err(MrcError::ConnectionError)?;
                 let mut input = String::new();
-                stdin.read_line(&mut input)?;
+                stdin.read_line(&mut input).map_err(MrcError::ConnectionError)?;
                 let trimmed = input.trim();
 
                 if trimmed.eq_ignore_ascii_case("exit") {
@@ -236,6 +240,7 @@ async fn main() -> io::Result<()> {
                         "set <property> <value>",
                         "Set the specified property to a value",
                     ),
+                    ("help", "Show this help message"),
                     ("exit", "Quit interactive mode"),
                 ];
 
@@ -301,7 +306,9 @@ async fn main() -> io::Result<()> {
                     ["list"] => {
                         info!("Listing playlist items");
                         if let Some(data) = get_property("playlist", None).await? {
-                            println!("{}", serde_json::to_string_pretty(&data)?);
+                            let pretty_json = serde_json::to_string_pretty(&data)
+                                .map_err(MrcError::ParseError)?;
+                            println!("{}", pretty_json);
                         }
                     }
 
@@ -331,7 +338,7 @@ async fn main() -> io::Result<()> {
 
                     _ => {
                         println!("Unknown command: {}", trimmed);
-                        println!("Valid commands: play <index>, pause, stop, next, prev, seek <seconds>, clear, list, add <files>, get <property>, set <property> <value>, exit");
+                        println!("Valid commands: play <index>, pause, stop, next, prev, seek <seconds>, clear, list, add <files>, get <property>, set <property> <value>, help, exit");
                     }
                 }
             }

@@ -41,12 +41,64 @@
 //! ## Functions
 
 use serde_json::{json, Value};
-use std::io::{self};
+use std::io;
+use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tracing::{debug, error};
 
 pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
+
+/// Errors that can occur when interacting with the MPV IPC interface.
+#[derive(Error, Debug)]
+pub enum MrcError {
+    /// Connection to the MPV socket could not be established.
+    #[error("failed to connect to MPV socket: {0}")]
+    ConnectionError(#[from] io::Error),
+    
+    /// Error when parsing a JSON response from MPV.
+    #[error("failed to parse JSON response: {0}")]
+    ParseError(#[from] serde_json::Error),
+    
+    /// Error when a socket operation times out.
+    #[error("socket operation timed out after {0} seconds")]
+    SocketTimeout(u64),
+    
+    /// Error when MPV returns an error response.
+    #[error("MPV error: {0}")]
+    MpvError(String),
+    
+    /// Error when trying to use a property that doesn't exist.
+    #[error("property '{0}' not found")]
+    PropertyNotFound(String),
+    
+    /// Error when the socket response is not valid UTF-8.
+    #[error("invalid UTF-8 in socket response: {0}")]
+    InvalidUtf8(#[from] std::string::FromUtf8Error),
+    
+    /// Error when a network operation fails.
+    #[error("network error: {0}")]
+    NetworkError(String),
+    
+    /// Error when the server connection is lost or broken.
+    #[error("server connection lost: {0}")]
+    ConnectionLost(String),
+    
+    /// Error when a communication protocol is violated.
+    #[error("protocol error: {0}")]
+    ProtocolError(String),
+    
+    /// Error when invalid input is provided.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    
+    /// Error related to TLS operations.
+    #[error("TLS error: {0}")]
+    TlsError(String),
+}
+
+/// A specialized Result type for MRC operations.
+pub type Result<T> = std::result::Result<T, MrcError>;
 
 /// Sends a generic IPC command to the specified socket and returns the parsed response data.
 ///
@@ -59,55 +111,84 @@ pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
 /// A `Result` containing an `Option<Value>` with the parsed response data if successful.
 ///
 /// # Errors
-/// Returns an error if the connection to the socket fails or if the response cannot be parsed.
+/// Returns a `MrcError` if the connection to the socket fails or if the response cannot be parsed.
 pub async fn send_ipc_command(
     command: &str,
     args: &[Value],
     socket_path: Option<&str>,
-) -> io::Result<Option<Value>> {
+) -> Result<Option<Value>> {
     let socket_path = socket_path.unwrap_or(SOCKET_PATH);
     debug!(
         "Sending IPC command: {} with arguments: {:?}",
         command, args
     );
 
-    match UnixStream::connect(socket_path).await {
-        Ok(mut socket) => {
-            debug!("Connected to socket at {}", socket_path);
+    // Add timeout for connection
+    let stream = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        UnixStream::connect(socket_path),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))?
+    .map_err(MrcError::ConnectionError)?;
 
-            let mut command_array = vec![json!(command)];
-            command_array.extend_from_slice(args);
-            let message = json!({ "command": command_array });
-            let message_str = format!("{}\n", serde_json::to_string(&message)?);
-            debug!("Serialized message to send with newline: {}", message_str);
+    let mut socket = stream;
+    debug!("Connected to socket at {}", socket_path);
 
-            socket.write_all(message_str.as_bytes()).await?;
-            socket.flush().await?;
-            debug!("Message sent and flushed");
+    let mut command_array = vec![json!(command)];
+    command_array.extend_from_slice(args);
+    let message = json!({ "command": command_array });
+    let message_str = format!("{}\n", serde_json::to_string(&message)?);
+    debug!("Serialized message to send with newline: {}", message_str);
 
-            let mut response = vec![0; 1024];
-            let n = socket.read(&mut response).await?;
-            let response_str = String::from_utf8_lossy(&response[..n]);
-            debug!("Raw response: {}", response_str);
+    // Write with timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.write_all(message_str.as_bytes()),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))??;
+    
+    // Flush with timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.flush(),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))??;
+    
+    debug!("Message sent and flushed");
 
-            match serde_json::from_str::<Value>(&response_str) {
-                Ok(json_response) => {
-                    debug!("Parsed IPC response: {:?}", json_response);
-                    Ok(json_response.get("data").cloned())
-                }
+    let mut response = vec![0; 1024];
+    
+    // Read with timeout
+    let n = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.read(&mut response),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))??;
+    
+    if n == 0 {
+        return Err(MrcError::ConnectionLost("Socket closed unexpectedly".into()));
+    }
 
-                Err(e) => {
-                    error!("Failed to parse response: {}", e);
-                    Ok(None)
-                }
-            }
-        }
+    let response_str = String::from_utf8(response[..n].to_vec())?;
+    debug!("Raw response: {}", response_str);
 
-        Err(e) => {
-            error!("Failed to connect to MPV socket: {}", e);
-            Err(e)
+    let json_response = serde_json::from_str::<Value>(&response_str)
+        .map_err(MrcError::ParseError)?;
+    
+    debug!("Parsed IPC response: {:?}", json_response);
+    
+    // Check if MPV returned an error
+    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
+        if !error.is_empty() {
+            return Err(MrcError::MpvError(error.to_string()));
         }
     }
+    
+    Ok(json_response.get("data").cloned())
 }
 
 /// Represents common MPV commands.
@@ -179,7 +260,7 @@ pub async fn set_property(
     property: &str,
     value: &Value,
     socket_path: Option<&str>,
-) -> io::Result<Option<Value>> {
+) -> Result<Option<Value>> {
     send_ipc_command(
         MpvCommand::SetProperty.as_str(),
         &[json!(property), value.clone()],
@@ -198,7 +279,7 @@ pub async fn set_property(
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn playlist_next(socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn playlist_next(socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistNext.as_str(), &[], socket_path).await
 }
 
@@ -212,7 +293,7 @@ pub async fn playlist_next(socket_path: Option<&str>) -> io::Result<Option<Value
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn playlist_prev(socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn playlist_prev(socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistPrev.as_str(), &[], socket_path).await
 }
 
@@ -227,7 +308,7 @@ pub async fn playlist_prev(socket_path: Option<&str>) -> io::Result<Option<Value
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn seek(seconds: f64, socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn seek(seconds: f64, socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(MpvCommand::Seek.as_str(), &[json!(seconds)], socket_path).await
 }
 
@@ -241,7 +322,7 @@ pub async fn seek(seconds: f64, socket_path: Option<&str>) -> io::Result<Option<
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn quit(socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn quit(socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(MpvCommand::Quit.as_str(), &[], socket_path).await
 }
 
@@ -261,7 +342,7 @@ pub async fn playlist_move(
     from_index: usize,
     to_index: usize,
     socket_path: Option<&str>,
-) -> io::Result<Option<Value>> {
+) -> Result<Option<Value>> {
     send_ipc_command(
         MpvCommand::PlaylistMove.as_str(),
         &[json!(from_index), json!(to_index)],
@@ -284,7 +365,7 @@ pub async fn playlist_move(
 pub async fn playlist_remove(
     index: Option<usize>,
     socket_path: Option<&str>,
-) -> io::Result<Option<Value>> {
+) -> Result<Option<Value>> {
     let args = match index {
         Some(idx) => vec![json!(idx)],
         None => vec![json!("current")],
@@ -302,7 +383,7 @@ pub async fn playlist_remove(
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn playlist_clear(socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn playlist_clear(socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(MpvCommand::PlaylistClear.as_str(), &[], socket_path).await
 }
 
@@ -317,7 +398,7 @@ pub async fn playlist_clear(socket_path: Option<&str>) -> io::Result<Option<Valu
 ///
 /// # Errors
 /// Returns an error if the connection to the socket fails or the command execution encounters issues.
-pub async fn get_property(property: &str, socket_path: Option<&str>) -> io::Result<Option<Value>> {
+pub async fn get_property(property: &str, socket_path: Option<&str>) -> Result<Option<Value>> {
     send_ipc_command(
         MpvCommand::GetProperty.as_str(),
         &[json!(property)],
@@ -342,7 +423,7 @@ pub async fn loadfile(
     filename: &str,
     append: bool,
     socket_path: Option<&str>,
-) -> io::Result<Option<Value>> {
+) -> Result<Option<Value>> {
     let append_flag = if append {
         json!("append-play")
     } else {

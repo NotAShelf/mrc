@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_native_tls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use mrc::{get_property, playlist_clear, playlist_next, playlist_prev, quit, seek, set_property};
+use mrc::{get_property, playlist_clear, playlist_next, playlist_prev, quit, seek, set_property, MrcError, Result as MrcResult};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -26,11 +26,13 @@ struct Config {
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     acceptor: Arc<TlsAcceptor>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = acceptor.accept(stream).await?;
+) -> MrcResult<()> {
+    let mut stream = acceptor.accept(stream).await
+        .map_err(|e| MrcError::TlsError(e.to_string()))?;
     let mut buffer = vec![0; 2048];
 
-    let n = stream.read(&mut buffer).await?;
+    let n = stream.read(&mut buffer).await
+        .map_err(MrcError::ConnectionError)?;
     let request = String::from_utf8_lossy(&buffer[..n]);
 
     debug!("Received request:\n{}", request);
@@ -87,45 +89,35 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn process_command(command: &str) -> Result<String, String> {
+async fn process_command(command: &str) -> MrcResult<String> {
     match command {
         "pause" => {
             info!("Pausing playback");
-            set_property("pause", &json!(true), None)
-                .await
-                .map_err(|e| format!("Failed to pause: {:?}", e))?;
+            set_property("pause", &json!(true), None).await?;
             Ok("Paused playback\n".to_string())
         }
 
         "play" => {
             info!("Unpausing playback");
-            set_property("pause", &json!(false), None)
-                .await
-                .map_err(|e| format!("Failed to play: {:?}", e))?;
+            set_property("pause", &json!(false), None).await?;
             Ok("Resumed playback\n".to_string())
         }
 
         "stop" => {
             info!("Stopping playback and quitting MPV");
-            quit(None)
-                .await
-                .map_err(|e| format!("Failed to stop: {:?}", e))?;
+            quit(None).await?;
             Ok("Stopped playback\n".to_string())
         }
 
         "next" => {
             info!("Skipping to next item in the playlist");
-            playlist_next(None)
-                .await
-                .map_err(|e| format!("Failed to skip to next: {:?}", e))?;
+            playlist_next(None).await?;
             Ok("Skipped to next item\n".to_string())
         }
 
         "prev" => {
             info!("Skipping to previous item in the playlist");
-            playlist_prev(None)
-                .await
-                .map_err(|e| format!("Failed to skip to previous: {:?}", e))?;
+            playlist_prev(None).await?;
             Ok("Skipped to previous item\n".to_string())
         }
 
@@ -134,55 +126,56 @@ async fn process_command(command: &str) -> Result<String, String> {
             if let Some(seconds) = parts.get(1) {
                 if let Ok(sec) = seconds.parse::<i32>() {
                     info!("Seeking to {} seconds", sec);
-                    seek(sec.into(), None)
-                        .await
-                        .map_err(|e| format!("Failed to seek: {:?}", e))?;
+                    seek(sec.into(), None).await?;
                     return Ok(format!("Seeking to {} seconds\n", sec));
                 }
             }
-            Err("Invalid seek command".to_string())
+            Err(MrcError::InvalidInput("Invalid seek command".to_string()))
         }
 
         "clear" => {
             info!("Clearing the playlist");
-            playlist_clear(None)
-                .await
-                .map_err(|e| format!("Failed to clear playlist: {:?}", e))?;
+            playlist_clear(None).await?;
             Ok("Cleared playlist\n".to_string())
         }
 
         "list" => {
             info!("Listing playlist items");
             match get_property("playlist", None).await {
-                Ok(Some(data)) => Ok(format!(
-                    "Playlist: {}",
-                    serde_json::to_string_pretty(&data).unwrap()
-                )),
-                Ok(None) => Err("No playlist data available".to_string()),
-                Err(e) => Err(format!("Failed to fetch playlist: {:?}", e)),
+                Ok(Some(data)) => {
+                    let pretty_json = serde_json::to_string_pretty(&data)
+                        .map_err(MrcError::ParseError)?;
+                    Ok(format!("Playlist: {}", pretty_json))
+                },
+                Ok(None) => Err(MrcError::PropertyNotFound("playlist".to_string())),
+                Err(e) => Err(e),
             }
         }
-        _ => Err("Unknown command".to_string()),
+        _ => Err(MrcError::InvalidInput(format!("Unknown command: {}", command))),
     }
 }
 
-fn create_tls_acceptor() -> Result<TlsAcceptor, Box<dyn std::error::Error + Send + Sync>> {
+fn create_tls_acceptor() -> MrcResult<TlsAcceptor> {
     let pfx_path = env::var("TLS_PFX_PATH")
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "TLS_PFX_PATH not set"))?;
+        .map_err(|_| MrcError::InvalidInput("TLS_PFX_PATH not set".to_string()))?;
     let password = env::var("TLS_PASSWORD")
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "TLS_PASSWORD not set"))?;
+        .map_err(|_| MrcError::InvalidInput("TLS_PASSWORD not set".to_string()))?;
 
-    let mut file = std::fs::File::open(&pfx_path)?;
+    let mut file = std::fs::File::open(&pfx_path)
+        .map_err(MrcError::ConnectionError)?;
     let mut identity = vec![];
-    file.read_to_end(&mut identity)?;
+    file.read_to_end(&mut identity)
+        .map_err(MrcError::ConnectionError)?;
 
-    let identity = Identity::from_pkcs12(&identity, &password)?;
-    let native_acceptor = NativeTlsAcceptor::new(identity)?;
+    let identity = Identity::from_pkcs12(&identity, &password)
+        .map_err(|e| MrcError::TlsError(e.to_string()))?;
+    let native_acceptor = NativeTlsAcceptor::new(identity)
+        .map_err(|e| MrcError::TlsError(e.to_string()))?;
     Ok(TlsAcceptor::from(native_acceptor))
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> MrcResult<()> {
     tracing_subscriber::fmt::init();
     let config = Config::parse();
 
@@ -191,17 +184,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "Error: MPV socket not found at '{}'. Is MPV running?",
             config.socket
         );
+        return Err(MrcError::ConnectionError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("MPV socket not found at '{}'", config.socket),
+        )));
     }
 
     info!("Server is starting...");
     match create_tls_acceptor() {
         Ok(acceptor) => {
             let acceptor = Arc::new(acceptor);
-            let listener = tokio::net::TcpListener::bind(&config.bind).await?;
+            let listener = tokio::net::TcpListener::bind(&config.bind).await
+                .map_err(MrcError::ConnectionError)?;
             info!("Server is listening on {}", config.bind);
 
             loop {
-                let (stream, _) = listener.accept().await?;
+                let (stream, _) = listener.accept().await
+                    .map_err(MrcError::ConnectionError)?;
                 info!("New connection accepted.");
 
                 let acceptor = Arc::clone(&acceptor);

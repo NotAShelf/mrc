@@ -32,7 +32,7 @@ jobs:
 
       - name: Build Documentation
         run: |
-          cargo doc --no-deps
+          cargo doc --no-deps --workspace --all-features
           echo '<meta http-equiv="refresh" content="0;url=mrc/index.html">' > target/doc/index.html
 
       - name: Deploy Docs

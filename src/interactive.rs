@@ -1,10 +1,7 @@
-use crate::{
-    MrcError, Result, get_property, loadfile, playlist_clear, playlist_next, playlist_prev, quit,
-    seek, set_property,
-};
+use crate::commands::Commands;
+use crate::{MrcError, Result};
 use serde_json::json;
 use std::io::{self, Write};
-use tracing::info;
 
 pub struct InteractiveMode;
 
@@ -76,85 +73,66 @@ impl InteractiveMode {
 
         match parts.as_slice() {
             ["play"] => {
-                info!("Unpausing playback");
-                set_property("pause", &json!(false), None).await?;
+                Commands::play(None).await?;
             }
 
             ["play", index] => {
                 if let Ok(idx) = index.parse::<usize>() {
-                    info!("Playing media at index: {}", idx);
-                    set_property("playlist-pos", &json!(idx), None).await?;
-                    set_property("pause", &json!(false), None).await?;
+                    Commands::play(Some(idx)).await?;
                 } else {
                     println!("Invalid index: {}", index);
                 }
             }
 
             ["pause"] => {
-                info!("Pausing playback");
-                set_property("pause", &json!(true), None).await?;
+                Commands::pause().await?;
             }
 
             ["stop"] => {
-                info!("Stopping playback and quitting MPV");
-                quit(None).await?;
+                Commands::stop().await?;
             }
 
             ["next"] => {
-                info!("Skipping to next item in the playlist");
-                playlist_next(None).await?;
+                Commands::next().await?;
             }
 
             ["prev"] => {
-                info!("Skipping to previous item in the playlist");
-                playlist_prev(None).await?;
+                Commands::prev().await?;
             }
 
             ["seek", seconds] => {
                 if let Ok(sec) = seconds.parse::<i32>() {
-                    info!("Seeking to {} seconds", sec);
-                    seek(sec.into(), None).await?;
+                    Commands::seek_to(sec.into()).await?;
                 } else {
                     println!("Invalid seconds: {}", seconds);
                 }
             }
 
             ["clear"] => {
-                info!("Clearing the playlist");
-                playlist_clear(None).await?;
+                Commands::clear_playlist().await?;
             }
 
             ["list"] => {
-                info!("Listing playlist items");
-                if let Some(data) = get_property("playlist", None).await? {
-                    let pretty_json =
-                        serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
-                    println!("{}", pretty_json);
-                }
+                Commands::list_playlist().await?;
             }
 
             ["add", files @ ..] => {
-                if files.is_empty() {
+                let file_strings: Vec<String> = files.iter().map(|s| s.to_string()).collect();
+                if file_strings.is_empty() {
                     println!("No files provided to add to the playlist");
                 } else {
-                    info!("Adding {} files to the playlist", files.len());
-                    for file in files {
-                        loadfile(file, true, None).await?;
-                    }
+                    Commands::add_files(&file_strings).await?;
                 }
             }
 
             ["get", property] => {
-                if let Some(data) = get_property(property, None).await? {
-                    println!("{}: {}", property, data);
-                }
+                Commands::get_single_property(property).await?;
             }
 
             ["set", property, value] => {
                 let json_value = serde_json::from_str::<serde_json::Value>(value)
                     .unwrap_or_else(|_| json!(value));
-                set_property(property, &json_value, None).await?;
-                println!("Set {} to {}", property, value);
+                Commands::set_single_property(property, &json_value).await?;
             }
 
             _ => {

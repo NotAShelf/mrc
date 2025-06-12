@@ -1,13 +1,10 @@
 use clap::{Parser, Subcommand};
 use mrc::SOCKET_PATH;
+use mrc::commands::Commands;
 use mrc::interactive::InteractiveMode;
-use mrc::{
-    MrcError, Result, get_property, loadfile, playlist_clear, playlist_move, playlist_next,
-    playlist_prev, playlist_remove, quit, seek, set_property,
-};
-use serde_json::json;
+use mrc::{MrcError, Result};
 use std::path::PathBuf;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -109,98 +106,55 @@ async fn main() -> Result<()> {
 
     match cli.command {
         CommandOptions::Play { index } => {
-            if let Some(idx) = index {
-                info!("Playing media at index: {}", idx);
-                set_property("playlist-pos", &json!(idx), None).await?;
-            }
-            info!("Unpausing playback");
-            set_property("pause", &json!(false), None).await?;
+            Commands::play(index).await?;
         }
 
         CommandOptions::Pause => {
-            info!("Pausing playback");
-            set_property("pause", &json!(true), None).await?;
+            Commands::pause().await?;
         }
 
         CommandOptions::Stop => {
-            info!("Stopping playback and quitting MPV");
-            quit(None).await?;
+            Commands::stop().await?;
         }
 
         CommandOptions::Next => {
-            info!("Skipping to next item in the playlist");
-            playlist_next(None).await?;
+            Commands::next().await?;
         }
 
         CommandOptions::Prev => {
-            info!("Skipping to previous item in the playlist");
-            playlist_prev(None).await?;
+            Commands::prev().await?;
         }
 
         CommandOptions::Seek { seconds } => {
-            info!("Seeking to {} seconds", seconds);
-            seek(seconds.into(), None).await?;
+            Commands::seek_to(seconds.into()).await?;
         }
 
         CommandOptions::Move { index1, index2 } => {
-            info!("Moving item from index {} to {}", index1, index2);
-            playlist_move(index1, index2, None).await?;
+            Commands::move_item(index1, index2).await?;
         }
 
         CommandOptions::Remove { index } => {
-            if let Some(idx) = index {
-                info!("Removing item at index {}", idx);
-                playlist_remove(Some(idx), None).await?;
-            } else {
-                info!("Removing current item from playlist");
-                playlist_remove(None, None).await?;
-            }
+            Commands::remove_item(index).await?;
         }
 
         CommandOptions::Clear => {
-            info!("Clearing the playlist");
-            playlist_clear(None).await?;
+            Commands::clear_playlist().await?;
         }
 
         CommandOptions::List => {
-            info!("Listing playlist items");
-            if let Some(data) = get_property("playlist", None).await? {
-                let pretty_json =
-                    serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
-                println!("{}", pretty_json);
-            }
+            Commands::list_playlist().await?;
         }
 
         CommandOptions::Add { filenames } => {
-            if filenames.is_empty() {
-                let e = "No files provided to add to the playlist";
-                error!("{}", e);
-                return Err(MrcError::InvalidInput(e.to_string()));
-            }
-
-            info!("Adding {} files to the playlist", filenames.len());
-            for filename in filenames {
-                loadfile(&filename, true, None).await?;
-            }
+            Commands::add_files(&filenames).await?;
         }
 
         CommandOptions::Replace { filenames } => {
-            info!("Replacing current playlist with {} files", filenames.len());
-            if let Some(first_file) = filenames.first() {
-                loadfile(first_file, false, None).await?;
-                for filename in &filenames[1..] {
-                    loadfile(filename, true, None).await?;
-                }
-            }
+            Commands::replace_playlist(&filenames).await?;
         }
 
         CommandOptions::Prop { properties } => {
-            info!("Fetching properties: {:?}", properties);
-            for property in properties {
-                if let Some(data) = get_property(&property, None).await? {
-                    println!("{property}: {data}");
-                }
-            }
+            Commands::get_properties(&properties).await?;
         }
 
         CommandOptions::Interactive => {

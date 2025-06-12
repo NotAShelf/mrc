@@ -39,6 +39,7 @@
 //! Default path for the MPV IPC socket: `/tmp/mpvsocket`
 //!
 
+pub mod commands;
 pub mod interactive;
 
 use serde_json::{Value, json};

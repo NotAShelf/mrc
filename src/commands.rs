@@ -215,3 +215,33 @@ impl Commands {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_add_files_empty_list() {
+        let result = Commands::add_files(&[]).await;
+        assert!(result.is_err());
+        if let Err(MrcError::InvalidInput(msg)) = result {
+            assert_eq!(msg, "No files provided to add to the playlist");
+        } else {
+            panic!("Expected InvalidInput error");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_replace_playlist_empty() {
+        let result = Commands::replace_playlist(&[]).await;
+        // Should succeed (no-op) with empty list
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_properties_empty() {
+        let result = Commands::get_properties(&[]).await;
+        // Should succeed (no-op) with empty list
+        assert!(result.is_ok());
+    }
+}

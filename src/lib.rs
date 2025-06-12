@@ -38,7 +38,8 @@
 //! ### `SOCKET_PATH`
 //! Default path for the MPV IPC socket: `/tmp/mpvsocket`
 //!
-//! ## Functions
+
+pub mod interactive;
 
 use serde_json::{Value, json};
 use std::io;
@@ -48,6 +49,7 @@ use tokio::net::UnixStream;
 use tracing::{debug, error};
 
 pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
+const SOCKET_TIMEOUT_SECS: u64 = 5;
 
 /// Errors that can occur when interacting with the MPV IPC interface.
 #[derive(Error, Debug)]
@@ -105,11 +107,11 @@ async fn connect_to_socket(socket_path: &str) -> Result<UnixStream> {
     debug!("Connecting to socket at {}", socket_path);
 
     tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
         UnixStream::connect(socket_path),
     )
     .await
-    .map_err(|_| MrcError::SocketTimeout(5))?
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))?
     .map_err(MrcError::ConnectionError)
 }
 
@@ -124,16 +126,19 @@ async fn send_message(socket: &mut UnixStream, command: &str, args: &[Value]) ->
 
     // Write with timeout
     tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
         socket.write_all(message_str.as_bytes()),
     )
     .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
 
     // Flush with timeout
-    tokio::time::timeout(std::time::Duration::from_secs(5), socket.flush())
-        .await
-        .map_err(|_| MrcError::SocketTimeout(5))??;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
+        socket.flush(),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
 
     debug!("Message sent and flushed");
     Ok(())
@@ -145,11 +150,11 @@ async fn read_response(socket: &mut UnixStream) -> Result<Value> {
 
     // Read with timeout
     let n = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
         socket.read(&mut response),
     )
     .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
 
     if n == 0 {
         return Err(MrcError::ConnectionLost(

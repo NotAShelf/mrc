@@ -9,7 +9,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_native_tls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use mrc::{get_property, playlist_clear, playlist_next, playlist_prev, quit, seek, set_property, MrcError, Result as MrcResult};
+use mrc::{
+    MrcError, Result as MrcResult, get_property, playlist_clear, playlist_next, playlist_prev,
+    quit, seek, set_property,
+};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -27,11 +30,15 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     acceptor: Arc<TlsAcceptor>,
 ) -> MrcResult<()> {
-    let mut stream = acceptor.accept(stream).await
+    let mut stream = acceptor
+        .accept(stream)
+        .await
         .map_err(|e| MrcError::TlsError(e.to_string()))?;
     let mut buffer = vec![0; 2048];
 
-    let n = stream.read(&mut buffer).await
+    let n = stream
+        .read(&mut buffer)
+        .await
         .map_err(MrcError::ConnectionError)?;
     let request = String::from_utf8_lossy(&buffer[..n]);
 
@@ -143,15 +150,18 @@ async fn process_command(command: &str) -> MrcResult<String> {
             info!("Listing playlist items");
             match get_property("playlist", None).await {
                 Ok(Some(data)) => {
-                    let pretty_json = serde_json::to_string_pretty(&data)
-                        .map_err(MrcError::ParseError)?;
+                    let pretty_json =
+                        serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
                     Ok(format!("Playlist: {}", pretty_json))
-                },
+                }
                 Ok(None) => Err(MrcError::PropertyNotFound("playlist".to_string())),
                 Err(e) => Err(e),
             }
         }
-        _ => Err(MrcError::InvalidInput(format!("Unknown command: {}", command))),
+        _ => Err(MrcError::InvalidInput(format!(
+            "Unknown command: {}",
+            command
+        ))),
     }
 }
 
@@ -161,16 +171,15 @@ fn create_tls_acceptor() -> MrcResult<TlsAcceptor> {
     let password = env::var("TLS_PASSWORD")
         .map_err(|_| MrcError::InvalidInput("TLS_PASSWORD not set".to_string()))?;
 
-    let mut file = std::fs::File::open(&pfx_path)
-        .map_err(MrcError::ConnectionError)?;
+    let mut file = std::fs::File::open(&pfx_path).map_err(MrcError::ConnectionError)?;
     let mut identity = vec![];
     file.read_to_end(&mut identity)
         .map_err(MrcError::ConnectionError)?;
 
     let identity = Identity::from_pkcs12(&identity, &password)
         .map_err(|e| MrcError::TlsError(e.to_string()))?;
-    let native_acceptor = NativeTlsAcceptor::new(identity)
-        .map_err(|e| MrcError::TlsError(e.to_string()))?;
+    let native_acceptor =
+        NativeTlsAcceptor::new(identity).map_err(|e| MrcError::TlsError(e.to_string()))?;
     Ok(TlsAcceptor::from(native_acceptor))
 }
 
@@ -194,13 +203,13 @@ async fn main() -> MrcResult<()> {
     match create_tls_acceptor() {
         Ok(acceptor) => {
             let acceptor = Arc::new(acceptor);
-            let listener = tokio::net::TcpListener::bind(&config.bind).await
+            let listener = tokio::net::TcpListener::bind(&config.bind)
+                .await
                 .map_err(MrcError::ConnectionError)?;
             info!("Server is listening on {}", config.bind);
 
             loop {
-                let (stream, _) = listener.accept().await
-                    .map_err(MrcError::ConnectionError)?;
+                let (stream, _) = listener.accept().await.map_err(MrcError::ConnectionError)?;
                 info!("New connection accepted.");
 
                 let acceptor = Arc::clone(&acceptor);

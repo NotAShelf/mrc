@@ -40,7 +40,7 @@
 //!
 //! ## Functions
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -55,43 +55,43 @@ pub enum MrcError {
     /// Connection to the MPV socket could not be established.
     #[error("failed to connect to MPV socket: {0}")]
     ConnectionError(#[from] io::Error),
-    
+
     /// Error when parsing a JSON response from MPV.
     #[error("failed to parse JSON response: {0}")]
     ParseError(#[from] serde_json::Error),
-    
+
     /// Error when a socket operation times out.
     #[error("socket operation timed out after {0} seconds")]
     SocketTimeout(u64),
-    
+
     /// Error when MPV returns an error response.
     #[error("MPV error: {0}")]
     MpvError(String),
-    
+
     /// Error when trying to use a property that doesn't exist.
     #[error("property '{0}' not found")]
     PropertyNotFound(String),
-    
+
     /// Error when the socket response is not valid UTF-8.
     #[error("invalid UTF-8 in socket response: {0}")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
-    
+
     /// Error when a network operation fails.
     #[error("network error: {0}")]
     NetworkError(String),
-    
+
     /// Error when the server connection is lost or broken.
     #[error("server connection lost: {0}")]
     ConnectionLost(String),
-    
+
     /// Error when a communication protocol is violated.
     #[error("protocol error: {0}")]
     ProtocolError(String),
-    
+
     /// Error when invalid input is provided.
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    
+
     /// Error related to TLS operations.
     #[error("TLS error: {0}")]
     TlsError(String),
@@ -99,6 +99,81 @@ pub enum MrcError {
 
 /// A specialized Result type for MRC operations.
 pub type Result<T> = std::result::Result<T, MrcError>;
+
+/// Connects to the MPV IPC socket with timeout.
+async fn connect_to_socket(socket_path: &str) -> Result<UnixStream> {
+    debug!("Connecting to socket at {}", socket_path);
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        UnixStream::connect(socket_path),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))?
+    .map_err(MrcError::ConnectionError)
+}
+
+/// Sends a command message to the socket with timeout.
+async fn send_message(socket: &mut UnixStream, command: &str, args: &[Value]) -> Result<()> {
+    let mut command_array = vec![json!(command)];
+    command_array.extend_from_slice(args);
+    let message = json!({ "command": command_array });
+    let message_str = format!("{}\n", serde_json::to_string(&message)?);
+
+    debug!("Serialized message to send with newline: {}", message_str);
+
+    // Write with timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.write_all(message_str.as_bytes()),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))??;
+
+    // Flush with timeout
+    tokio::time::timeout(std::time::Duration::from_secs(5), socket.flush())
+        .await
+        .map_err(|_| MrcError::SocketTimeout(5))??;
+
+    debug!("Message sent and flushed");
+    Ok(())
+}
+
+/// Reads and parses the response from the socket.
+async fn read_response(socket: &mut UnixStream) -> Result<Value> {
+    let mut response = vec![0; 1024];
+
+    // Read with timeout
+    let n = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.read(&mut response),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(5))??;
+
+    if n == 0 {
+        return Err(MrcError::ConnectionLost(
+            "Socket closed unexpectedly".into(),
+        ));
+    }
+
+    let response_str = String::from_utf8(response[..n].to_vec())?;
+    debug!("Raw response: {}", response_str);
+
+    let json_response =
+        serde_json::from_str::<Value>(&response_str).map_err(MrcError::ParseError)?;
+
+    debug!("Parsed IPC response: {:?}", json_response);
+
+    // Check if MPV returned an error
+    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
+        if !error.is_empty() {
+            return Err(MrcError::MpvError(error.to_string()));
+        }
+    }
+
+    Ok(json_response)
+}
 
 /// Sends a generic IPC command to the specified socket and returns the parsed response data.
 ///
@@ -123,71 +198,10 @@ pub async fn send_ipc_command(
         command, args
     );
 
-    // Add timeout for connection
-    let stream = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        UnixStream::connect(socket_path),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))?
-    .map_err(MrcError::ConnectionError)?;
+    let mut socket = connect_to_socket(socket_path).await?;
+    send_message(&mut socket, command, args).await?;
+    let json_response = read_response(&mut socket).await?;
 
-    let mut socket = stream;
-    debug!("Connected to socket at {}", socket_path);
-
-    let mut command_array = vec![json!(command)];
-    command_array.extend_from_slice(args);
-    let message = json!({ "command": command_array });
-    let message_str = format!("{}\n", serde_json::to_string(&message)?);
-    debug!("Serialized message to send with newline: {}", message_str);
-
-    // Write with timeout
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.write_all(message_str.as_bytes()),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    // Flush with timeout
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.flush(),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    debug!("Message sent and flushed");
-
-    let mut response = vec![0; 1024];
-    
-    // Read with timeout
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.read(&mut response),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    if n == 0 {
-        return Err(MrcError::ConnectionLost("Socket closed unexpectedly".into()));
-    }
-
-    let response_str = String::from_utf8(response[..n].to_vec())?;
-    debug!("Raw response: {}", response_str);
-
-    let json_response = serde_json::from_str::<Value>(&response_str)
-        .map_err(MrcError::ParseError)?;
-    
-    debug!("Parsed IPC response: {:?}", json_response);
-    
-    // Check if MPV returned an error
-    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
-        if !error.is_empty() {
-            return Err(MrcError::MpvError(error.to_string()));
-        }
-    }
-    
     Ok(json_response.get("data").cloned())
 }
 

@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
-use mrc::set_property;
 use mrc::SOCKET_PATH;
 use mrc::{
-    get_property, loadfile, playlist_clear, playlist_move, playlist_next, playlist_prev,
-    playlist_remove, quit, seek, MrcError, Result,
+    MrcError, Result, get_property, loadfile, playlist_clear, playlist_move, playlist_next,
+    playlist_prev, playlist_remove, quit, seek, set_property,
 };
 use serde_json::json;
-use std::{io::{self, Write}, path::PathBuf};
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 use tracing::{debug, error, info};
 
 #[derive(Parser)]
@@ -165,8 +167,8 @@ async fn main() -> Result<()> {
         CommandOptions::List => {
             info!("Listing playlist items");
             if let Some(data) = get_property("playlist", None).await? {
-                let pretty_json = serde_json::to_string_pretty(&data)
-                    .map_err(MrcError::ParseError)?;
+                let pretty_json =
+                    serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
                 println!("{}", pretty_json);
             }
         }
@@ -212,7 +214,9 @@ async fn main() -> Result<()> {
                 print!("mpv> ");
                 stdout.flush().map_err(MrcError::ConnectionError)?;
                 let mut input = String::new();
-                stdin.read_line(&mut input).map_err(MrcError::ConnectionError)?;
+                stdin
+                    .read_line(&mut input)
+                    .map_err(MrcError::ConnectionError)?;
                 let trimmed = input.trim();
 
                 if trimmed.eq_ignore_ascii_case("exit") {
@@ -338,7 +342,9 @@ async fn main() -> Result<()> {
 
                     _ => {
                         println!("Unknown command: {}", trimmed);
-                        println!("Valid commands: play <index>, pause, stop, next, prev, seek <seconds>, clear, list, add <files>, get <property>, set <property> <value>, help, exit");
+                        println!(
+                            "Valid commands: play <index>, pause, stop, next, prev, seek <seconds>, clear, list, add <files>, get <property>, set <property> <value>, help, exit"
+                        );
                     }
                 }
             }

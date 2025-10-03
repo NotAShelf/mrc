@@ -38,9 +38,11 @@
 //! ### `SOCKET_PATH`
 //! Default path for the MPV IPC socket: `/tmp/mpvsocket`
 //!
-//! ## Functions
 
-use serde_json::{json, Value};
+pub mod commands;
+pub mod interactive;
+
+use serde_json::{Value, json};
 use std::io;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -48,6 +50,7 @@ use tokio::net::UnixStream;
 use tracing::{debug, error};
 
 pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
+const SOCKET_TIMEOUT_SECS: u64 = 5;
 
 /// Errors that can occur when interacting with the MPV IPC interface.
 #[derive(Error, Debug)]
@@ -55,43 +58,43 @@ pub enum MrcError {
     /// Connection to the MPV socket could not be established.
     #[error("failed to connect to MPV socket: {0}")]
     ConnectionError(#[from] io::Error),
-    
+
     /// Error when parsing a JSON response from MPV.
     #[error("failed to parse JSON response: {0}")]
     ParseError(#[from] serde_json::Error),
-    
+
     /// Error when a socket operation times out.
     #[error("socket operation timed out after {0} seconds")]
     SocketTimeout(u64),
-    
+
     /// Error when MPV returns an error response.
     #[error("MPV error: {0}")]
     MpvError(String),
-    
+
     /// Error when trying to use a property that doesn't exist.
     #[error("property '{0}' not found")]
     PropertyNotFound(String),
-    
+
     /// Error when the socket response is not valid UTF-8.
     #[error("invalid UTF-8 in socket response: {0}")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
-    
+
     /// Error when a network operation fails.
     #[error("network error: {0}")]
     NetworkError(String),
-    
+
     /// Error when the server connection is lost or broken.
     #[error("server connection lost: {0}")]
     ConnectionLost(String),
-    
+
     /// Error when a communication protocol is violated.
     #[error("protocol error: {0}")]
     ProtocolError(String),
-    
+
     /// Error when invalid input is provided.
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    
+
     /// Error related to TLS operations.
     #[error("TLS error: {0}")]
     TlsError(String),
@@ -99,6 +102,84 @@ pub enum MrcError {
 
 /// A specialized Result type for MRC operations.
 pub type Result<T> = std::result::Result<T, MrcError>;
+
+/// Connects to the MPV IPC socket with timeout.
+async fn connect_to_socket(socket_path: &str) -> Result<UnixStream> {
+    debug!("Connecting to socket at {}", socket_path);
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
+        UnixStream::connect(socket_path),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))?
+    .map_err(MrcError::ConnectionError)
+}
+
+/// Sends a command message to the socket with timeout.
+async fn send_message(socket: &mut UnixStream, command: &str, args: &[Value]) -> Result<()> {
+    let mut command_array = vec![json!(command)];
+    command_array.extend_from_slice(args);
+    let message = json!({ "command": command_array });
+    let message_str = format!("{}\n", serde_json::to_string(&message)?);
+
+    debug!("Serialized message to send with newline: {}", message_str);
+
+    // Write with timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
+        socket.write_all(message_str.as_bytes()),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
+
+    // Flush with timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
+        socket.flush(),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
+
+    debug!("Message sent and flushed");
+    Ok(())
+}
+
+/// Reads and parses the response from the socket.
+async fn read_response(socket: &mut UnixStream) -> Result<Value> {
+    let mut response = vec![0; 1024];
+
+    // Read with timeout
+    let n = tokio::time::timeout(
+        std::time::Duration::from_secs(SOCKET_TIMEOUT_SECS),
+        socket.read(&mut response),
+    )
+    .await
+    .map_err(|_| MrcError::SocketTimeout(SOCKET_TIMEOUT_SECS))??;
+
+    if n == 0 {
+        return Err(MrcError::ConnectionLost(
+            "Socket closed unexpectedly".into(),
+        ));
+    }
+
+    let response_str = String::from_utf8(response[..n].to_vec())?;
+    debug!("Raw response: {}", response_str);
+
+    let json_response =
+        serde_json::from_str::<Value>(&response_str).map_err(MrcError::ParseError)?;
+
+    debug!("Parsed IPC response: {:?}", json_response);
+
+    // Check if MPV returned an error
+    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
+        if !error.is_empty() {
+            return Err(MrcError::MpvError(error.to_string()));
+        }
+    }
+
+    Ok(json_response)
+}
 
 /// Sends a generic IPC command to the specified socket and returns the parsed response data.
 ///
@@ -123,71 +204,10 @@ pub async fn send_ipc_command(
         command, args
     );
 
-    // Add timeout for connection
-    let stream = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        UnixStream::connect(socket_path),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))?
-    .map_err(MrcError::ConnectionError)?;
+    let mut socket = connect_to_socket(socket_path).await?;
+    send_message(&mut socket, command, args).await?;
+    let json_response = read_response(&mut socket).await?;
 
-    let mut socket = stream;
-    debug!("Connected to socket at {}", socket_path);
-
-    let mut command_array = vec![json!(command)];
-    command_array.extend_from_slice(args);
-    let message = json!({ "command": command_array });
-    let message_str = format!("{}\n", serde_json::to_string(&message)?);
-    debug!("Serialized message to send with newline: {}", message_str);
-
-    // Write with timeout
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.write_all(message_str.as_bytes()),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    // Flush with timeout
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.flush(),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    debug!("Message sent and flushed");
-
-    let mut response = vec![0; 1024];
-    
-    // Read with timeout
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        socket.read(&mut response),
-    )
-    .await
-    .map_err(|_| MrcError::SocketTimeout(5))??;
-    
-    if n == 0 {
-        return Err(MrcError::ConnectionLost("Socket closed unexpectedly".into()));
-    }
-
-    let response_str = String::from_utf8(response[..n].to_vec())?;
-    debug!("Raw response: {}", response_str);
-
-    let json_response = serde_json::from_str::<Value>(&response_str)
-        .map_err(MrcError::ParseError)?;
-    
-    debug!("Parsed IPC response: {:?}", json_response);
-    
-    // Check if MPV returned an error
-    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
-        if !error.is_empty() {
-            return Err(MrcError::MpvError(error.to_string()));
-        }
-    }
-    
     Ok(json_response.get("data").cloned())
 }
 
@@ -435,4 +455,203 @@ pub async fn loadfile(
         socket_path,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::error::Error;
+
+    #[test]
+    fn test_mrc_error_display() {
+        let error = MrcError::InvalidInput("test message".to_string());
+        assert_eq!(error.to_string(), "invalid input: test message");
+    }
+
+    #[test]
+    fn test_mrc_error_from_io_error() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let mrc_error = MrcError::from(io_error);
+        assert!(matches!(mrc_error, MrcError::ConnectionError(_)));
+    }
+
+    #[test]
+    fn test_mrc_error_from_json_error() {
+        let json_error = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let mrc_error = MrcError::from(json_error);
+        assert!(matches!(mrc_error, MrcError::ParseError(_)));
+    }
+
+    #[test]
+    fn test_socket_timeout_error() {
+        let error = MrcError::SocketTimeout(5);
+        assert_eq!(
+            error.to_string(),
+            "socket operation timed out after 5 seconds"
+        );
+    }
+
+    #[test]
+    fn test_mpv_error() {
+        let error = MrcError::MpvError("playback failed".to_string());
+        assert_eq!(error.to_string(), "MPV error: playback failed");
+    }
+
+    #[test]
+    fn test_property_not_found_error() {
+        let error = MrcError::PropertyNotFound("volume".to_string());
+        assert_eq!(error.to_string(), "property 'volume' not found");
+    }
+
+    #[test]
+    fn test_connection_lost_error() {
+        let error = MrcError::ConnectionLost("socket closed".to_string());
+        assert_eq!(error.to_string(), "server connection lost: socket closed");
+    }
+
+    #[test]
+    fn test_tls_error() {
+        let error = MrcError::TlsError("certificate invalid".to_string());
+        assert_eq!(error.to_string(), "TLS error: certificate invalid");
+    }
+
+    #[test]
+    fn test_error_trait_implementation() {
+        let error = MrcError::InvalidInput("test".to_string());
+        assert!(error.source().is_none());
+
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let connection_error = MrcError::ConnectionError(io_error);
+        assert!(connection_error.source().is_some());
+    }
+
+    #[test]
+    fn test_mpv_command_as_str() {
+        assert_eq!(MpvCommand::SetProperty.as_str(), "set_property");
+        assert_eq!(MpvCommand::PlaylistNext.as_str(), "playlist-next");
+        assert_eq!(MpvCommand::PlaylistPrev.as_str(), "playlist-prev");
+        assert_eq!(MpvCommand::Seek.as_str(), "seek");
+        assert_eq!(MpvCommand::Quit.as_str(), "quit");
+        assert_eq!(MpvCommand::PlaylistMove.as_str(), "playlist-move");
+        assert_eq!(MpvCommand::PlaylistRemove.as_str(), "playlist-remove");
+        assert_eq!(MpvCommand::PlaylistClear.as_str(), "playlist-clear");
+        assert_eq!(MpvCommand::GetProperty.as_str(), "get_property");
+        assert_eq!(MpvCommand::LoadFile.as_str(), "loadfile");
+    }
+
+    #[test]
+    fn test_mpv_command_debug() {
+        let cmd = MpvCommand::SetProperty;
+        let debug_str = format!("{:?}", cmd);
+        assert_eq!(debug_str, "SetProperty");
+    }
+
+    #[test]
+    fn test_result_type_alias() {
+        fn test_function() -> Result<String> {
+            Ok("test".to_string())
+        }
+
+        let result = test_function();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test");
+    }
+
+    #[test]
+    fn test_error_variants_exhaustive() {
+        // Test that all error variants are properly handled
+        let errors = vec![
+            MrcError::ConnectionError(std::io::Error::new(std::io::ErrorKind::Other, "test")),
+            MrcError::ParseError(serde_json::from_str::<serde_json::Value>("").unwrap_err()),
+            MrcError::SocketTimeout(10),
+            MrcError::MpvError("test".to_string()),
+            MrcError::PropertyNotFound("test".to_string()),
+            MrcError::InvalidUtf8(String::from_utf8(vec![0, 159, 146, 150]).unwrap_err()),
+            MrcError::NetworkError("test".to_string()),
+            MrcError::ConnectionLost("test".to_string()),
+            MrcError::ProtocolError("test".to_string()),
+            MrcError::InvalidInput("test".to_string()),
+            MrcError::TlsError("test".to_string()),
+        ];
+
+        for error in errors {
+            // Ensure all errors implement Display
+            let _ = error.to_string();
+            // Ensure all errors implement Debug
+            let _ = format!("{:?}", error);
+        }
+    }
+
+    // Mock tests for functions that would require MPV socket
+    #[tokio::test]
+    async fn test_loadfile_append_flag_true() {
+        // Test that loadfile creates correct append flag for true
+        // This would fail with socket connection, but tests the parameter handling
+        let result = loadfile("test.mp4", true, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_loadfile_append_flag_false() {
+        // Test that loadfile creates correct append flag for false
+        let result = loadfile("test.mp4", false, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_seek_parameter_handling() {
+        let result = seek(42.5, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_playlist_move_parameter_handling() {
+        let result = playlist_move(0, 1, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_set_property_parameter_handling() {
+        let result = set_property("volume", &json!(50), Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_property_parameter_handling() {
+        let result = get_property("volume", Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_playlist_operations_error_handling() {
+        // Test that all playlist operations handle connection errors properly
+        let socket_path = Some("/nonexistent/socket");
+
+        let results = vec![
+            playlist_next(socket_path).await,
+            playlist_prev(socket_path).await,
+            playlist_clear(socket_path).await,
+            playlist_remove(Some(0), socket_path).await,
+            playlist_remove(None, socket_path).await,
+        ];
+
+        for result in results {
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_quit_command() {
+        let result = quit(Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
 }

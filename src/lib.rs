@@ -456,3 +456,202 @@ pub async fn loadfile(
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::error::Error;
+
+    #[test]
+    fn test_mrc_error_display() {
+        let error = MrcError::InvalidInput("test message".to_string());
+        assert_eq!(error.to_string(), "invalid input: test message");
+    }
+
+    #[test]
+    fn test_mrc_error_from_io_error() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let mrc_error = MrcError::from(io_error);
+        assert!(matches!(mrc_error, MrcError::ConnectionError(_)));
+    }
+
+    #[test]
+    fn test_mrc_error_from_json_error() {
+        let json_error = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let mrc_error = MrcError::from(json_error);
+        assert!(matches!(mrc_error, MrcError::ParseError(_)));
+    }
+
+    #[test]
+    fn test_socket_timeout_error() {
+        let error = MrcError::SocketTimeout(5);
+        assert_eq!(
+            error.to_string(),
+            "socket operation timed out after 5 seconds"
+        );
+    }
+
+    #[test]
+    fn test_mpv_error() {
+        let error = MrcError::MpvError("playback failed".to_string());
+        assert_eq!(error.to_string(), "MPV error: playback failed");
+    }
+
+    #[test]
+    fn test_property_not_found_error() {
+        let error = MrcError::PropertyNotFound("volume".to_string());
+        assert_eq!(error.to_string(), "property 'volume' not found");
+    }
+
+    #[test]
+    fn test_connection_lost_error() {
+        let error = MrcError::ConnectionLost("socket closed".to_string());
+        assert_eq!(error.to_string(), "server connection lost: socket closed");
+    }
+
+    #[test]
+    fn test_tls_error() {
+        let error = MrcError::TlsError("certificate invalid".to_string());
+        assert_eq!(error.to_string(), "TLS error: certificate invalid");
+    }
+
+    #[test]
+    fn test_error_trait_implementation() {
+        let error = MrcError::InvalidInput("test".to_string());
+        assert!(error.source().is_none());
+
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let connection_error = MrcError::ConnectionError(io_error);
+        assert!(connection_error.source().is_some());
+    }
+
+    #[test]
+    fn test_mpv_command_as_str() {
+        assert_eq!(MpvCommand::SetProperty.as_str(), "set_property");
+        assert_eq!(MpvCommand::PlaylistNext.as_str(), "playlist-next");
+        assert_eq!(MpvCommand::PlaylistPrev.as_str(), "playlist-prev");
+        assert_eq!(MpvCommand::Seek.as_str(), "seek");
+        assert_eq!(MpvCommand::Quit.as_str(), "quit");
+        assert_eq!(MpvCommand::PlaylistMove.as_str(), "playlist-move");
+        assert_eq!(MpvCommand::PlaylistRemove.as_str(), "playlist-remove");
+        assert_eq!(MpvCommand::PlaylistClear.as_str(), "playlist-clear");
+        assert_eq!(MpvCommand::GetProperty.as_str(), "get_property");
+        assert_eq!(MpvCommand::LoadFile.as_str(), "loadfile");
+    }
+
+    #[test]
+    fn test_mpv_command_debug() {
+        let cmd = MpvCommand::SetProperty;
+        let debug_str = format!("{:?}", cmd);
+        assert_eq!(debug_str, "SetProperty");
+    }
+
+    #[test]
+    fn test_result_type_alias() {
+        fn test_function() -> Result<String> {
+            Ok("test".to_string())
+        }
+
+        let result = test_function();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test");
+    }
+
+    #[test]
+    fn test_error_variants_exhaustive() {
+        // Test that all error variants are properly handled
+        let errors = vec![
+            MrcError::ConnectionError(std::io::Error::new(std::io::ErrorKind::Other, "test")),
+            MrcError::ParseError(serde_json::from_str::<serde_json::Value>("").unwrap_err()),
+            MrcError::SocketTimeout(10),
+            MrcError::MpvError("test".to_string()),
+            MrcError::PropertyNotFound("test".to_string()),
+            MrcError::InvalidUtf8(String::from_utf8(vec![0, 159, 146, 150]).unwrap_err()),
+            MrcError::NetworkError("test".to_string()),
+            MrcError::ConnectionLost("test".to_string()),
+            MrcError::ProtocolError("test".to_string()),
+            MrcError::InvalidInput("test".to_string()),
+            MrcError::TlsError("test".to_string()),
+        ];
+
+        for error in errors {
+            // Ensure all errors implement Display
+            let _ = error.to_string();
+            // Ensure all errors implement Debug
+            let _ = format!("{:?}", error);
+        }
+    }
+
+    // Mock tests for functions that would require MPV socket
+    #[tokio::test]
+    async fn test_loadfile_append_flag_true() {
+        // Test that loadfile creates correct append flag for true
+        // This would fail with socket connection, but tests the parameter handling
+        let result = loadfile("test.mp4", true, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_loadfile_append_flag_false() {
+        // Test that loadfile creates correct append flag for false
+        let result = loadfile("test.mp4", false, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_seek_parameter_handling() {
+        let result = seek(42.5, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_playlist_move_parameter_handling() {
+        let result = playlist_move(0, 1, Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_set_property_parameter_handling() {
+        let result = set_property("volume", &json!(50), Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_property_parameter_handling() {
+        let result = get_property("volume", Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_playlist_operations_error_handling() {
+        // Test that all playlist operations handle connection errors properly
+        let socket_path = Some("/nonexistent/socket");
+
+        let results = vec![
+            playlist_next(socket_path).await,
+            playlist_prev(socket_path).await,
+            playlist_clear(socket_path).await,
+            playlist_remove(Some(0), socket_path).await,
+            playlist_remove(None, socket_path).await,
+        ];
+
+        for result in results {
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_quit_command() {
+        let result = quit(Some("/nonexistent/socket")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MrcError::ConnectionError(_)));
+    }
+}

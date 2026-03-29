@@ -8,7 +8,7 @@ reorder_keys          = true
 
 [[rule]]
 include = [ "**/Cargo.toml" ]
-keys    = [ "workspace.package" ]
+keys    = [ "package" ]
 
 [rule.formatting]
 reorder_keys = false

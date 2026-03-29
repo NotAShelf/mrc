@@ -1,18 +1,23 @@
-use crate::commands::Commands;
-use crate::{MrcError, Result};
-use rustyline::config::EditMode;
-use rustyline::{Cmd, Config, Editor, KeyEvent};
+use std::{io::Error, path::PathBuf};
+
+use rustyline::{Cmd, Config, Editor, KeyEvent, config::EditMode};
 use serde_json::json;
-use std::io::Error;
-use std::path::PathBuf;
+
+use crate::{MrcError, Result, commands::Commands};
 
 pub struct InteractiveMode;
 
 impl InteractiveMode {
+    /// Runs the interactive mode REPL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails or the REPL encounters an error.
     pub async fn run(socket_path: Option<&str>) -> Result<()> {
-        let hist_path = dirs::data_local_dir()
-            .map(|p| p.join("mrc").join("history.txt"))
-            .unwrap_or_else(|| PathBuf::from("history.txt"));
+        let hist_path = dirs::data_local_dir().map_or_else(
+            || PathBuf::from("history.txt"),
+            |p| p.join("mpvrc").join("history.txt"),
+        );
 
         let config = Config::builder().edit_mode(EditMode::Vi).build();
 
@@ -48,19 +53,18 @@ impl InteractiveMode {
                     }
 
                     if let Err(e) = Self::process_command(trimmed, socket_path).await {
-                        eprintln!("Error: {}", e);
+                        eprintln!("Error: {e}");
                     }
                 }
                 Err(rustyline::error::ReadlineError::Interrupted) => {
                     println!("(interrupted)");
-                    continue;
                 }
                 Err(rustyline::error::ReadlineError::Eof) => {
                     println!("Exiting interactive mode.");
                     break;
                 }
                 Err(err) => {
-                    eprintln!("Error: {:?}", err);
+                    eprintln!("Error: {err:?}");
                     break;
                 }
             }
@@ -95,7 +99,7 @@ impl InteractiveMode {
         ];
 
         for (command, description) in commands {
-            println!("  {:<22} - {}", command, description);
+            println!("  {command:<22} - {description}");
         }
 
         println!("\nKeyboard shortcuts:");
@@ -116,7 +120,7 @@ impl InteractiveMode {
                 if let Ok(idx) = index.parse::<usize>() {
                     Commands::play(Some(idx), socket_path).await?;
                 } else {
-                    println!("Invalid index: {}", index);
+                    println!("Invalid index: {index}");
                 }
             }
 
@@ -140,7 +144,7 @@ impl InteractiveMode {
                 if let Ok(sec) = seconds.parse::<i32>() {
                     Commands::seek_to(sec.into(), socket_path).await?;
                 } else {
-                    println!("Invalid seconds: {}", seconds);
+                    println!("Invalid seconds: {seconds}");
                 }
             }
 
@@ -153,7 +157,8 @@ impl InteractiveMode {
             }
 
             ["add", files @ ..] => {
-                let file_strings: Vec<String> = files.iter().map(|s| s.to_string()).collect();
+                let file_strings: Vec<String> =
+                    files.iter().map(std::string::ToString::to_string).collect();
                 if file_strings.is_empty() {
                     println!("No files provided to add to the playlist");
                 } else {
@@ -172,7 +177,7 @@ impl InteractiveMode {
             }
 
             _ => {
-                println!("Unknown command: {}", input);
+                println!("Unknown command: {input}");
                 println!("Type 'help' for a list of available commands.");
             }
         }
@@ -180,4 +185,3 @@ impl InteractiveMode {
         Ok(())
     }
 }
-

@@ -3,9 +3,9 @@
 //! # Examples
 //!
 //! ```rust
-//! use mrc::commands::Commands;
+//! use mpvrc::commands::Commands;
 //!
-//! # async fn example() -> mrc::Result<()> {
+//! # async fn example() -> mpvrc::Result<()> {
 //! // Play media at a specific playlist index
 //! Commands::play(Some(0), None).await;
 //!
@@ -39,6 +39,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `index` - Optional playlist index to play from
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn play(index: Option<usize>, socket_path: Option<&str>) -> Result<()> {
         if let Some(idx) = index {
             info!("Playing media at index: {}", idx);
@@ -50,6 +54,10 @@ impl Commands {
     }
 
     /// Pauses the currently playing media.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn pause(socket_path: Option<&str>) -> Result<()> {
         info!("Pausing playback");
         set_property("pause", &json!(true), socket_path).await?;
@@ -59,6 +67,10 @@ impl Commands {
     /// Stops playback and quits MPV.
     ///
     /// This is a destructive operation that will terminate the MPV process.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn stop(socket_path: Option<&str>) -> Result<()> {
         info!("Stopping playback and quitting MPV");
         quit(socket_path).await?;
@@ -66,6 +78,10 @@ impl Commands {
     }
 
     /// Advances to the next item in the playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn next(socket_path: Option<&str>) -> Result<()> {
         info!("Skipping to next item in the playlist");
         playlist_next(socket_path).await?;
@@ -73,6 +89,10 @@ impl Commands {
     }
 
     /// Goes back to the previous item in the playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn prev(socket_path: Option<&str>) -> Result<()> {
         info!("Skipping to previous item in the playlist");
         playlist_prev(socket_path).await?;
@@ -84,6 +104,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `seconds` - The position in seconds to seek to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn seek_to(seconds: f64, socket_path: Option<&str>) -> Result<()> {
         info!("Seeking to {} seconds", seconds);
         seek(seconds, socket_path).await?;
@@ -96,6 +120,10 @@ impl Commands {
     ///
     /// * `from_index` - The current index of the item
     /// * `to_index` - The desired new index for the item
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn move_item(
         from_index: usize,
         to_index: usize,
@@ -113,6 +141,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `index` - Optional specific index to remove
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn remove_item(index: Option<usize>, socket_path: Option<&str>) -> Result<()> {
         if let Some(idx) = index {
             info!("Removing item at index {}", idx);
@@ -125,6 +157,10 @@ impl Commands {
     }
 
     /// Clears the entire playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn clear_playlist(socket_path: Option<&str>) -> Result<()> {
         info!("Clearing the playlist");
         playlist_clear(socket_path).await?;
@@ -132,6 +168,10 @@ impl Commands {
     }
 
     /// Lists all items in the playlist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn list_playlist(socket_path: Option<&str>) -> Result<()> {
         info!("Listing playlist items");
         if let Some(data) = get_property("playlist", socket_path).await? {
@@ -145,6 +185,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `filenames` - List of file paths to add
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no files are provided or socket communication fails.
     pub async fn add_files(filenames: &[String], socket_path: Option<&str>) -> Result<()> {
         if filenames.is_empty() {
             let e = "No files provided to add to the playlist";
@@ -163,6 +207,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `filenames` - List of file paths to replace the playlist with
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn replace_playlist(filenames: &[String], socket_path: Option<&str>) -> Result<()> {
         info!("Replacing current playlist with {} files", filenames.len());
         if let Some(first_file) = filenames.first() {
@@ -179,6 +227,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `properties` - List of property names to fetch
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn get_properties(properties: &[String], socket_path: Option<&str>) -> Result<()> {
         info!("Fetching properties: {:?}", properties);
         for property in properties {
@@ -194,6 +246,10 @@ impl Commands {
     /// # Arguments
     ///
     /// * `property` - The property name to fetch
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn get_single_property(property: &str, socket_path: Option<&str>) -> Result<()> {
         if let Some(data) = get_property(property, socket_path).await? {
             println!("{property}: {data}");
@@ -207,6 +263,10 @@ impl Commands {
     ///
     /// * `property` - The property name to set
     /// * `value` - The JSON value to set
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket communication fails.
     pub async fn set_single_property(
         property: &str,
         value: &serde_json::Value,
@@ -236,15 +296,15 @@ fn print_playlist(data: &serde_json::Value) {
                 .unwrap_or("unknown");
             let current = item
                 .get("current")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             let marker = if current { ">" } else { " " };
-            println!("{} {:3} | {} | {}", marker, i, title, filename);
+            println!("{marker} {i:3} | {title} | {filename}");
         }
     } else {
         let pretty_json = serde_json::to_string_pretty(data).unwrap_or_else(|_| data.to_string());
-        println!("{}", pretty_json);
+        println!("{pretty_json}");
     }
 }
 

@@ -4,12 +4,13 @@
   rustfmt,
   clippy,
   cargo,
+  taplo,
   openssl,
   pkg-config,
   rustc,
 }:
 mkShell {
-  name = "mrc";
+  name = "mpvrc";
   packages = [
     cargo
     rustc
@@ -17,6 +18,7 @@ mkShell {
     rust-analyzer
     clippy
     (rustfmt.override {asNightly = true;})
+    taplo
 
     # For TLS and friends
     openssl

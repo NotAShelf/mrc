@@ -1,9 +1,10 @@
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
+
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use mrc::commands::Commands;
-use mrc::interactive::InteractiveMode;
-use mrc::{MrcError, Result, SOCKET_PATH};
-use std::io::{self, Write};
-use std::path::PathBuf;
+use mpvrc::{MrcError, Result, SOCKET_PATH, commands::Commands, interactive::InteractiveMode};
 use tracing::{debug, error};
 
 #[derive(Parser)]
@@ -115,27 +116,42 @@ pub enum Shell {
 impl Shell {
     pub fn generate(&self, app: &mut clap::Command) {
         match self {
-            Shell::Bash => {
-                clap_complete::generate(clap_complete::Shell::Bash, app, "mrc", &mut io::stdout())
+            Self::Bash => {
+                clap_complete::generate(
+                    clap_complete::Shell::Bash,
+                    app,
+                    "mpvrc",
+                    &mut io::stdout(),
+                );
             }
 
-            Shell::Elvish => {
-                clap_complete::generate(clap_complete::Shell::Elvish, app, "mrc", &mut io::stdout())
+            Self::Elvish => {
+                clap_complete::generate(
+                    clap_complete::Shell::Elvish,
+                    app,
+                    "mpvrc",
+                    &mut io::stdout(),
+                );
             }
 
-            Shell::Fish => {
-                clap_complete::generate(clap_complete::Shell::Fish, app, "mrc", &mut io::stdout())
+            Self::Fish => {
+                clap_complete::generate(
+                    clap_complete::Shell::Fish,
+                    app,
+                    "mpvrc",
+                    &mut io::stdout(),
+                );
             }
 
-            Shell::PowerShell => clap_complete::generate(
+            Self::PowerShell => clap_complete::generate(
                 clap_complete::Shell::PowerShell,
                 app,
-                "mrc",
+                "mpvrc",
                 &mut io::stdout(),
             ),
 
-            Shell::Zsh => {
-                clap_complete::generate(clap_complete::Shell::Zsh, app, "mrc", &mut io::stdout())
+            Self::Zsh => {
+                clap_complete::generate(clap_complete::Shell::Zsh, app, "mpvrc", &mut io::stdout());
             }
         }
     }
@@ -151,7 +167,7 @@ fn confirm(prompt: &str, yes: bool) -> bool {
     if yes {
         return true;
     }
-    print!("{} [y/N] ", prompt);
+    print!("{prompt} [y/N] ");
     io::stdout().flush().unwrap();
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
@@ -220,7 +236,7 @@ async fn main() -> Result<()> {
 
         CommandOptions::Remove { index } => {
             if confirm(
-                &format!("This will remove item at index {:?}. Continue?", index),
+                &format!("This will remove item at index {index:?}. Continue?"),
                 cli.yes,
             ) {
                 Commands::remove_item(index, Some(&socket_path)).await?;
@@ -262,4 +278,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

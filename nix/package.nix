@@ -8,8 +8,8 @@
   s = ../.;
 in
   rustPlatform.buildRustPackage (finalAttrs: {
-    pname = "mrc";
-    version = (builtins.fromTOML (builtins.readFile (s + /Cargo.toml))).package.version;
+    pname = "mpvrc";
+    version = (lib.importTOML (s + /Cargo.toml)).package.version;
 
     src = fs.toSource {
       root = s;
@@ -32,12 +32,11 @@ in
     ];
 
     cargoLock.lockFile = "${finalAttrs.src}/Cargo.lock";
-    useFetchCargoVendor = true;
 
     meta = {
       description = "IPC wrapper & command-line controller for MPV, the video player";
-      homePage = "https://github.com/notashelf/mrc";
-      mainProgram = "mrc";
+      homePage = "https://github.com/notashelf/mpvrc";
+      mainProgram = "mpvrc";
       license = lib.licenses.mpl20;
       maintainers = [lib.maintainers.NotAShelf];
     };

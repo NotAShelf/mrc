@@ -1,7 +1,7 @@
 use std::{env, io::Read, sync::Arc};
 
 use clap::Parser;
-use mrc::{MrcError, Result as MrcResult, SOCKET_PATH, commands::Commands};
+use mpvrc::{MrcError, Result as MrcResult, SOCKET_PATH, commands::Commands};
 use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_native_tls::TlsAcceptor;
@@ -50,19 +50,14 @@ async fn handle_connection(
     let token_line = headers
         .iter()
         .find(|&&line| line.starts_with("Authorization:"));
-    let token = match token_line {
-        Some(line) => line.split(" ").nth(1).unwrap_or_default(),
-        None => "",
-    };
+    let token = token_line.map_or("", |line| line.split(' ').nth(1).unwrap_or_default());
 
-    let auth_token = match env::var("AUTH_TOKEN") {
-        Ok(token) => token,
-        Err(_) => {
-            warn!("AUTH_TOKEN environment variable not set. Authentication disabled.");
-            let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 29\r\n\r\nAuthentication token not set\n";
-            stream.write_all(response.as_bytes()).await?;
-            return Ok(());
-        }
+    let Ok(auth_token) = env::var("AUTH_TOKEN") else {
+        warn!("AUTH_TOKEN environment variable not set. Authentication disabled.");
+        let response =
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 29\r\n\r\nAuthentication token not set\n";
+        stream.write_all(response.as_bytes()).await?;
+        return Ok(());
     };
 
     if token.is_empty() || token != auth_token {
@@ -98,7 +93,7 @@ async fn handle_connection(
         Ok(response) => ("200 OK", response),
         Err(e) => {
             error!("Error processing command '{}': {}", command, e);
-            ("400 Bad Request", format!("Error: {}\n", e))
+            ("400 Bad Request", format!("Error: {e}\n"))
         }
     };
 
@@ -131,9 +126,9 @@ async fn process_command(command: &str, socket_path: &str) -> MrcResult<String> 
         ["play", index] => {
             if let Ok(idx) = index.parse::<usize>() {
                 Commands::play(Some(idx), Some(socket_path)).await?;
-                Ok(format!("Playing from index {}\n", idx))
+                Ok(format!("Playing from index {idx}\n"))
             } else {
-                Err(MrcError::InvalidInput(format!("Invalid index: {}", index)))
+                Err(MrcError::InvalidInput(format!("Invalid index: {index}")))
             }
         }
 
@@ -155,11 +150,10 @@ async fn process_command(command: &str, socket_path: &str) -> MrcResult<String> 
         ["seek", seconds] => {
             if let Ok(sec) = seconds.parse::<f64>() {
                 Commands::seek_to(sec, Some(socket_path)).await?;
-                Ok(format!("Seeking to {} seconds\n", sec))
+                Ok(format!("Seeking to {sec} seconds\n"))
             } else {
                 Err(MrcError::InvalidInput(format!(
-                    "Invalid seconds: {}",
-                    seconds
+                    "Invalid seconds: {seconds}"
                 )))
             }
         }
@@ -169,11 +163,11 @@ async fn process_command(command: &str, socket_path: &str) -> MrcResult<String> 
             Ok("Cleared playlist\n".to_string())
         }
 
-        ["list"] => match mrc::get_property("playlist", Some(socket_path)).await? {
+        ["list"] => match mpvrc::get_property("playlist", Some(socket_path)).await? {
             Some(data) => {
                 let pretty_json =
                     serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
-                Ok(format!("Playlist: {}\n", pretty_json))
+                Ok(format!("Playlist: {pretty_json}\n"))
             }
             None => Ok("Playlist is empty\n".to_string()),
         },
@@ -216,7 +210,7 @@ async fn main() -> MrcResult<()> {
         );
         return Err(MrcError::ConnectionError(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("MPV socket not found at '{}'", socket_path),
+            format!("MPV socket not found at '{socket_path}'"),
         )));
     }
 

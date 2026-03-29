@@ -15,7 +15,7 @@
 //! ```rust
 //! use serde_json::json;
 //! use tokio;
-//! use mrc::{send_ipc_command, playlist_next, set_property};
+//! use mpvrc::{send_ipc_command, playlist_next, set_property};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -175,10 +175,10 @@ async fn read_response(socket: &mut UnixStream) -> Result<Value> {
     debug!("Parsed IPC response: {:?}", json_response);
 
     // Check if MPV returned an error
-    if let Some(error) = json_response.get("error").and_then(|e| e.as_str()) {
-        if !error.is_empty() {
-            return Err(MrcError::MpvError(error.to_string()));
-        }
+    if let Some(error) = json_response.get("error").and_then(|e| e.as_str())
+        && !error.is_empty()
+    {
+        return Err(MrcError::MpvError(error.to_string()));
     }
 
     Ok(json_response)
@@ -389,10 +389,7 @@ pub async fn playlist_remove(
     index: Option<usize>,
     socket_path: Option<&str>,
 ) -> Result<Option<Value>> {
-    let args = match index {
-        Some(idx) => vec![json!(idx)],
-        None => vec![json!("current")],
-    };
+    let args = index.map_or_else(|| vec![json!("current")], |idx| vec![json!(idx)]);
     send_ipc_command(MpvCommand::PlaylistRemove.as_str(), &args, socket_path).await
 }
 
@@ -469,20 +466,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mrc_error_display() {
+    fn test_mpvrc_error_display() {
         let error = MrcError::InvalidInput("test message".to_string());
         assert_eq!(error.to_string(), "invalid input: test message");
     }
 
     #[test]
-    fn test_mrc_error_from_io_error() {
+    fn test_mpvrc_error_from_io_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let mrc_error = MrcError::from(io_error);
         assert!(matches!(mrc_error, MrcError::ConnectionError(_)));
     }
 
     #[test]
-    fn test_mrc_error_from_json_error() {
+    fn test_mpvrc_error_from_json_error() {
         let json_error = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let mrc_error = MrcError::from(json_error);
         assert!(matches!(mrc_error, MrcError::ParseError(_)));
@@ -548,12 +545,13 @@ mod tests {
     #[test]
     fn test_mpv_command_debug() {
         let cmd = MpvCommand::SetProperty;
-        let debug_str = format!("{:?}", cmd);
+        let debug_str = format!("{cmd:?}");
         assert_eq!(debug_str, "SetProperty");
     }
 
     #[test]
     fn test_result_type_alias() {
+        #[allow(clippy::unnecessary_wraps)]
         fn test_function() -> Result<String> {
             Ok("test".to_string())
         }
@@ -567,7 +565,7 @@ mod tests {
     fn test_error_variants_exhaustive() {
         // Test that all error variants are properly handled
         let errors = vec![
-            MrcError::ConnectionError(std::io::Error::new(std::io::ErrorKind::Other, "test")),
+            MrcError::ConnectionError(std::io::Error::other("test")),
             MrcError::ParseError(serde_json::from_str::<serde_json::Value>("").unwrap_err()),
             MrcError::SocketTimeout(10),
             MrcError::MpvError("test".to_string()),
@@ -584,7 +582,7 @@ mod tests {
             // Ensure all errors implement Display
             let _ = error.to_string();
             // Ensure all errors implement Debug
-            let _ = format!("{:?}", error);
+            let _ = format!("{error:?}");
         }
     }
 

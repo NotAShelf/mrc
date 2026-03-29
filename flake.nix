@@ -12,8 +12,8 @@
     pkgsForEach = nixpkgs.legacyPackages;
   in rec {
     packages = forEachSystem (system: {
-      mrc = pkgsForEach.${system}.callPackage ./nix/package.nix {};
-      default = self.packages.${system}.mrc;
+      mpvrc = pkgsForEach.${system}.callPackage ./nix/package.nix {};
+      default = self.packages.${system}.mpvrc;
     });
 
     devShells = forEachSystem (system: {

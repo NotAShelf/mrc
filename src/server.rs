@@ -1,14 +1,11 @@
-use std::env;
-use std::io::Read;
-use std::sync::Arc;
+use std::{env, io::Read, sync::Arc};
 
 use clap::Parser;
+use mrc::{MrcError, Result as MrcResult, SOCKET_PATH, commands::Commands};
 use native_tls::{Identity, TlsAcceptor as NativeTlsAcceptor};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_native_tls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
-
-use mrc::{MrcError, Result as MrcResult, commands::Commands};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -18,13 +15,22 @@ struct Config {
     bind: String,
 
     /// Path to MPV IPC socket
-    #[arg(short, long, default_value = "/tmp/mpvsocket")]
-    socket: String,
+    #[arg(short, long)]
+    socket: Option<String>,
+}
+
+impl Config {
+    fn socket_path(&self) -> String {
+        self.socket
+            .clone()
+            .unwrap_or_else(|| SOCKET_PATH.to_string())
+    }
 }
 
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     acceptor: Arc<TlsAcceptor>,
+    socket_path: String,
 ) -> MrcResult<()> {
     let mut stream = acceptor
         .accept(stream)
@@ -88,7 +94,7 @@ async fn handle_connection(
 
     info!("Processing command: {}", command);
 
-    let (status_code, response_body) = match process_command(command).await {
+    let (status_code, response_body) = match process_command(command, &socket_path).await {
         Ok(response) => ("200 OK", response),
         Err(e) => {
             error!("Error processing command '{}': {}", command, e);
@@ -108,23 +114,23 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn process_command(command: &str) -> MrcResult<String> {
+async fn process_command(command: &str, socket_path: &str) -> MrcResult<String> {
     let parts: Vec<&str> = command.split_whitespace().collect();
 
     match parts.as_slice() {
         ["pause"] => {
-            Commands::pause().await?;
+            Commands::pause(Some(socket_path)).await?;
             Ok("Paused playback\n".to_string())
         }
 
         ["play"] => {
-            Commands::play(None).await?;
+            Commands::play(None, Some(socket_path)).await?;
             Ok("Resumed playback\n".to_string())
         }
 
         ["play", index] => {
             if let Ok(idx) = index.parse::<usize>() {
-                Commands::play(Some(idx)).await?;
+                Commands::play(Some(idx), Some(socket_path)).await?;
                 Ok(format!("Playing from index {}\n", idx))
             } else {
                 Err(MrcError::InvalidInput(format!("Invalid index: {}", index)))
@@ -132,23 +138,23 @@ async fn process_command(command: &str) -> MrcResult<String> {
         }
 
         ["stop"] => {
-            Commands::stop().await?;
+            Commands::stop(Some(socket_path)).await?;
             Ok("Stopped playback\n".to_string())
         }
 
         ["next"] => {
-            Commands::next().await?;
+            Commands::next(Some(socket_path)).await?;
             Ok("Skipped to next item\n".to_string())
         }
 
         ["prev"] => {
-            Commands::prev().await?;
+            Commands::prev(Some(socket_path)).await?;
             Ok("Skipped to previous item\n".to_string())
         }
 
         ["seek", seconds] => {
             if let Ok(sec) = seconds.parse::<f64>() {
-                Commands::seek_to(sec).await?;
+                Commands::seek_to(sec, Some(socket_path)).await?;
                 Ok(format!("Seeking to {} seconds\n", sec))
             } else {
                 Err(MrcError::InvalidInput(format!(
@@ -159,22 +165,18 @@ async fn process_command(command: &str) -> MrcResult<String> {
         }
 
         ["clear"] => {
-            Commands::clear_playlist().await?;
+            Commands::clear_playlist(Some(socket_path)).await?;
             Ok("Cleared playlist\n".to_string())
         }
 
-        ["list"] => {
-            // For server response, we need to capture the output differently
-            // since Commands::list_playlist() prints to stdout
-            match mrc::get_property("playlist", None).await? {
-                Some(data) => {
-                    let pretty_json =
-                        serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
-                    Ok(format!("Playlist: {}\n", pretty_json))
-                }
-                None => Ok("Playlist is empty\n".to_string()),
+        ["list"] => match mrc::get_property("playlist", Some(socket_path)).await? {
+            Some(data) => {
+                let pretty_json =
+                    serde_json::to_string_pretty(&data).map_err(MrcError::ParseError)?;
+                Ok(format!("Playlist: {}\n", pretty_json))
             }
-        }
+            None => Ok("Playlist is empty\n".to_string()),
+        },
 
         _ => Err(MrcError::InvalidInput(format!(
             "Unknown command: {}. Available commands: pause, play [index], stop, next, prev, seek <seconds>, clear, list",
@@ -205,15 +207,16 @@ fn create_tls_acceptor() -> MrcResult<TlsAcceptor> {
 async fn main() -> MrcResult<()> {
     tracing_subscriber::fmt::init();
     let config = Config::parse();
+    let socket_path = config.socket_path();
 
-    if !std::path::Path::new(&config.socket).exists() {
+    if !std::path::Path::new(&socket_path).exists() {
         error!(
             "Error: MPV socket not found at '{}'. Is MPV running?",
-            config.socket
+            socket_path
         );
         return Err(MrcError::ConnectionError(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("MPV socket not found at '{}'", config.socket),
+            format!("MPV socket not found at '{}'", socket_path),
         )));
     }
 
@@ -231,7 +234,7 @@ async fn main() -> MrcResult<()> {
                 info!("New connection accepted.");
 
                 let acceptor = Arc::clone(&acceptor);
-                tokio::spawn(handle_connection(stream, acceptor));
+                tokio::spawn(handle_connection(stream, acceptor, socket_path.clone()));
             }
         }
 

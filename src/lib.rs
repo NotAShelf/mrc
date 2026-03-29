@@ -42,12 +42,15 @@
 pub mod commands;
 pub mod interactive;
 
-use serde_json::{Value, json};
 use std::io;
+
+use serde_json::{Value, json};
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tracing::{debug, error};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+};
+use tracing::debug;
 
 pub const SOCKET_PATH: &str = "/tmp/mpvsocket";
 const SOCKET_TIMEOUT_SECS: u64 = 5;
@@ -459,9 +462,11 @@ pub async fn loadfile(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
     use std::error::Error;
+
+    use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn test_mrc_error_display() {

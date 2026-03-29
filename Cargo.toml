@@ -4,10 +4,10 @@ description = "MPV Remote Control - CLI and server for controlling MPV via IPC"
 version = "0.2.0"
 edition = "2024"
 default-run = "cli"
-authors = ["NotAShelf <raf@notashelf.dev>"]
 repository = "https://github.com/notashelf/mrc"
-license = "MPL-2.*"
-readme = "README.md"
+license = "MPL-2.0"
+rust-version = "1.92.0"
+readme = true
 keywords = ["mpv", "media", "player", "control", "ipc"]
 categories = ["command-line-utilities", "multimedia"]
 
@@ -16,14 +16,14 @@ categories = ["command-line-utilities", "multimedia"]
 name = "cli"
 path = "src/cli.rs"
 
-# server implementation for remote usage
+# Server implementation for remote usage
 [[bin]]
 name = "server"
 path = "src/server.rs"
 
 [dependencies]
 anyhow = "1.0.102"
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.0", features = ["derive", "cargo"] }
 clap_derive = "4.6.0"
 ipc-channel = "0.21.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -34,6 +34,10 @@ native-tls = "0.2.18"
 tokio-native-tls = "0.3.1"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+rustyline = "18.0.0"
+anstyle = "1.0.14"
+dirs = "6.0.0"
+clap_complete = "4.6.0"
 
 [profile.dev]
 opt-level = 1

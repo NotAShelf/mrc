@@ -1,15 +1,21 @@
-use clap::{Parser, Subcommand};
-use mrc::SOCKET_PATH;
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use mrc::commands::Commands;
 use mrc::interactive::InteractiveMode;
-use mrc::{MrcError, Result};
+use mrc::{MrcError, Result, SOCKET_PATH};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use tracing::{debug, error};
 
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, help = "Path to MPV socket")]
+    socket: Option<String>,
+
+    #[arg(short, long, global = true, help = "Skip confirmation prompts")]
+    yes: bool,
+
+    #[arg(short, long, global = true, help = "Enable debug output")]
     debug: bool,
 
     #[command(subcommand)]
@@ -88,6 +94,68 @@ enum CommandOptions {
 
     /// Enter interactive mode to send commands to MPV IPC
     Interactive,
+
+    /// Generate shell completions
+    Completion {
+        #[arg(value_enum, default_value_t = Shell::Bash)]
+        shell: Shell,
+    },
+}
+
+#[expect(clippy::enum_variant_names)]
+#[derive(Clone, ValueEnum)]
+pub enum Shell {
+    Bash,
+    Elvish,
+    Fish,
+    PowerShell,
+    Zsh,
+}
+
+impl Shell {
+    pub fn generate(&self, app: &mut clap::Command) {
+        match self {
+            Shell::Bash => {
+                clap_complete::generate(clap_complete::Shell::Bash, app, "mrc", &mut io::stdout())
+            }
+
+            Shell::Elvish => {
+                clap_complete::generate(clap_complete::Shell::Elvish, app, "mrc", &mut io::stdout())
+            }
+
+            Shell::Fish => {
+                clap_complete::generate(clap_complete::Shell::Fish, app, "mrc", &mut io::stdout())
+            }
+
+            Shell::PowerShell => clap_complete::generate(
+                clap_complete::Shell::PowerShell,
+                app,
+                "mrc",
+                &mut io::stdout(),
+            ),
+
+            Shell::Zsh => {
+                clap_complete::generate(clap_complete::Shell::Zsh, app, "mrc", &mut io::stdout())
+            }
+        }
+    }
+}
+
+fn get_socket_path(cli: &Cli) -> String {
+    cli.socket
+        .clone()
+        .unwrap_or_else(|| SOCKET_PATH.to_string())
+}
+
+fn confirm(prompt: &str, yes: bool) -> bool {
+    if yes {
+        return true;
+    }
+    print!("{} [y/N] ", prompt);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().eq_ignore_ascii_case("y")
 }
 
 #[tokio::main]
@@ -95,9 +163,22 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    if !PathBuf::from(SOCKET_PATH).exists() {
-        debug!(SOCKET_PATH);
-        error!("Error: MPV socket not found. Is MPV running?");
+    if matches!(cli.command, CommandOptions::Completion { .. }) {
+        let mut app = Cli::command();
+        if let CommandOptions::Completion { shell } = &cli.command {
+            shell.generate(&mut app);
+        }
+        return Ok(());
+    }
+
+    let socket_path = get_socket_path(&cli);
+
+    if !PathBuf::from(&socket_path).exists() {
+        debug!(socket_path);
+        error!(
+            "Error: MPV socket not found at {}. Is MPV running?",
+            socket_path
+        );
         return Err(MrcError::ConnectionError(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "MPV socket not found",
@@ -106,61 +187,79 @@ async fn main() -> Result<()> {
 
     match cli.command {
         CommandOptions::Play { index } => {
-            Commands::play(index).await?;
+            Commands::play(index, Some(&socket_path)).await?;
         }
 
         CommandOptions::Pause => {
-            Commands::pause().await?;
+            Commands::pause(Some(&socket_path)).await?;
         }
 
         CommandOptions::Stop => {
-            Commands::stop().await?;
+            if confirm("This will stop playback and quit MPV. Continue?", cli.yes) {
+                Commands::stop(Some(&socket_path)).await?;
+            } else {
+                println!("Cancelled.");
+            }
         }
 
         CommandOptions::Next => {
-            Commands::next().await?;
+            Commands::next(Some(&socket_path)).await?;
         }
 
         CommandOptions::Prev => {
-            Commands::prev().await?;
+            Commands::prev(Some(&socket_path)).await?;
         }
 
         CommandOptions::Seek { seconds } => {
-            Commands::seek_to(seconds.into()).await?;
+            Commands::seek_to(seconds.into(), Some(&socket_path)).await?;
         }
 
         CommandOptions::Move { index1, index2 } => {
-            Commands::move_item(index1, index2).await?;
+            Commands::move_item(index1, index2, Some(&socket_path)).await?;
         }
 
         CommandOptions::Remove { index } => {
-            Commands::remove_item(index).await?;
+            if confirm(
+                &format!("This will remove item at index {:?}. Continue?", index),
+                cli.yes,
+            ) {
+                Commands::remove_item(index, Some(&socket_path)).await?;
+            } else {
+                println!("Cancelled.");
+            }
         }
 
         CommandOptions::Clear => {
-            Commands::clear_playlist().await?;
+            if confirm("This will clear the entire playlist. Continue?", cli.yes) {
+                Commands::clear_playlist(Some(&socket_path)).await?;
+            } else {
+                println!("Cancelled.");
+            }
         }
 
         CommandOptions::List => {
-            Commands::list_playlist().await?;
+            Commands::list_playlist(Some(&socket_path)).await?;
         }
 
         CommandOptions::Add { filenames } => {
-            Commands::add_files(&filenames).await?;
+            Commands::add_files(&filenames, Some(&socket_path)).await?;
         }
 
         CommandOptions::Replace { filenames } => {
-            Commands::replace_playlist(&filenames).await?;
+            Commands::replace_playlist(&filenames, Some(&socket_path)).await?;
         }
 
         CommandOptions::Prop { properties } => {
-            Commands::get_properties(&properties).await?;
+            Commands::get_properties(&properties, Some(&socket_path)).await?;
         }
 
         CommandOptions::Interactive => {
-            InteractiveMode::run().await?;
+            InteractiveMode::run(Some(&socket_path)).await?;
         }
+
+        CommandOptions::Completion { .. } => unreachable!(),
     }
 
     Ok(())
 }
+

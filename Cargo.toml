@@ -1,10 +1,10 @@
 [package]
-name = "mrc"
+name = "mpvrc"
 description = "MPV Remote Control - CLI and server for controlling MPV via IPC"
 version = "0.2.0"
 edition = "2024"
 default-run = "cli"
-repository = "https://github.com/notashelf/mrc"
+repository = "https://github.com/notashelf/mpvrc"
 license = "MPL-2.0"
 rust-version = "1.92.0"
 readme = true
@@ -50,9 +50,36 @@ codegen-units = 1
 panic = "abort"
 
 [workspace.lints.clippy]
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+
+# The lint groups above enable some less-than-desirable rules, we should manually
+# enable those to keep our sanity.
+absolute_paths = "allow"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+filetype_is_file = "warn"
+get_unwrap = "warn"
+infinite_loop = "warn"
+map_with_unused_argument_over_ranges = "warn"
+multiple_crate_versions = "allow"             # :(
+non_std_lazy_statics = "warn"
+pathbuf_init_then_push = "warn"
+pattern_type_mismatch = "allow"
+rc_buffer = "warn"
+rc_mutex = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+similar_names = "allow"
+too_long_first_doc_paragraph = "allow"
+undocumented_unsafe_blocks = "warn"
+unused_result_ok = "warn"
+unused_trait_names = "allow"
 blanket_clippy_restriction_lints = "allow"
-restriction = { level = "warn", priority = -1 }
 alloc_instead_of_core = "allow"
 allow_attributes_without_reason = "allow"
 arbitrary_source_item_ordering = "allow"
